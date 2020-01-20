@@ -12,7 +12,7 @@
   "scripts": {
     "build": "npm run lint && tsc",
     "fdt": "jest -t FDT",
-    "lint": "tsc --noEmit && eslint '*/**/*.{js,ts}' --quiet --fix",
+    "lint": "tsc --noEmit && eslint */**/*.{js,ts} --quiet --fix",
     "test": "jest --watchAll"
   },
   "author": "Software AG",

@@ -25,14 +25,14 @@ import { AdabasMap } from './adabas-map';
 export enum CallType { Create, Delete, Read, Update, Close, ET, BT, Undefined };
 
 export interface CallData {
-    map?: AdabasMap,
-    fnr?: number,
-    isn?: any,
-    object?: any,
-    criteria?: string,
-    fields?: string[],
-    sortedBy?: string,
-    page?: number
+    map?: AdabasMap;
+    fnr?: number;
+    isn?: any;
+    object?: any;
+    criteria?: string;
+    fields?: string[];
+    sortedBy?: string;
+    page?: number;
 }
 
 export interface AdabasOptions {
