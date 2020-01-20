@@ -1,0 +1,28 @@
+{
+    "eslint.validate": [
+        "javascript",
+        "typescript"
+    ],
+    "editor.formatOnSave": true,
+    "[javascript]": {
+        "editor.formatOnSave": false
+    },
+    "[typescript]": {
+        "editor.formatOnSave": false
+    },
+    "[markdown]": {
+        "editor.formatOnSave": false
+    },
+    "files.exclude": {
+        "node_modules": true
+    },
+    "search.exclude": {
+        "**/coverage": true,
+        "**/dist": true
+    },
+    "editor.tabSize": 4,
+    "editor.detectIndentation": false,
+    "editor.codeActionsOnSave": {
+        "source.fixAll.eslint": true
+    }
+}

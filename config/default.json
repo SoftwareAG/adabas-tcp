@@ -1,0 +1,9 @@
+{
+  "AdaTcp": {
+    "host": "localhost",
+    "port": 49152
+  },
+  "Test": {
+    "employeeFile": 11
+  }
+}

@@ -1,0 +1,23 @@
+{
+  /* https://www.typescriptlang.org/docs/handbook/compiler-options.html */
+  "compilerOptions": {
+    "target": "ES5",
+    "module": "commonjs",
+    "noEmitOnError": true,
+    "noUnusedLocals": true, /* Report errors on unused locals. */
+    "noUnusedParameters": true, /* Report errors on unused parameters. */
+    "noImplicitReturns": true, /* Report error when not all code paths in function return a value. */
+    "noImplicitAny": true,
+    "experimentalDecorators": true,
+    "sourceMap": false,
+    "inlineSourceMap": true,
+    "declaration": true,
+    "sourceRoot": "src",
+    "outDir": "dist"
+  },
+  "exclude": [
+    "node_modules",
+    "dist",
+    "spec"
+  ]
+}
