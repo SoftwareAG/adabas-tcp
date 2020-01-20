@@ -31,7 +31,7 @@ adabas.read({ fnr: 11 }).then( result => {
 
 What it does is to read the File Description Table of the file and adds all available fields to the format buffer. The result is an array of Javascript objects:
 
-```json
+```
 [
   { ISN: 1,
     AA: '50005800',
