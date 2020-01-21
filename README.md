@@ -20,7 +20,7 @@ npm install adabas-tcp
 This simple example shows how to read all records of file 11 and writes the result to the console:
 
 ```typescript
-const Adabas = require('./adabas').Adabas;
+const Adabas = require('adabas-tcp').Adabas;
 
 const adabas = new Adabas('localhost', 60001);
 adabas.read({ fnr: 11 }).then( result => {
