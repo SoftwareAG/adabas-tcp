@@ -1,8 +1,8 @@
 # Adabas TCP
 
-Access to an Adabas Database from Node.js using the Adabas TCP connection
+Access to an Adabas Database from Node.js using the Adabas TCP connection.
 
-It offers the classical *CRUD* access methods for Adabas
+It offers the classical *CRUD* access methods for Adabas:
 
 * _C_ reate - inserts an new Adabas record
 * _R_ ead - read Adabas records
@@ -29,7 +29,7 @@ adabas.read({ fnr: 11 }).then( result => {
 });
 ```
 
-What it does is to read the File Description Table of the file and adds all available fields to the format buffer. The result is an array of Javascript objects:
+What it does is to read the File Description Table of the file and add all available fields to the format buffer. The result is an array of Javascript objects:
 
 ```
 [
@@ -54,11 +54,11 @@ What it does is to read the File Description Table of the file and adds all avai
 
 ## General
 
-To hide the complexity of an Adabas call with all the buffers, short names and options from the user this implementation offers a high level API, which generates all buffers from the provided metadata.
+To hide the complexity of an Adabas call with all the buffers, short names and options from the user, this implementation offers a high level API which generates all buffers from the provided metadata.
 
 ### Data Representation
 
-The Adabas data is represented as an Javascript object. This means the read method returns Javascript object and the insert and update methods access a Javascript object as input. Here is an example for the Javascript object for an Employees record:
+The Adabas data is represented as a Javascript object. This means the read method returns a Javascript object and the insert and update methods access a Javascript object as input. Here is an example for the Javascript object for an Employees record:
 
 ```javascript
 const record = {
@@ -71,7 +71,7 @@ const record = {
 };
 ```
 
-The type of object attributes must fit to the Adabas types. This means a numeric type in Adabas must be a Javascript type of number. These types are validated during the processing and an error is thrown if there are incompatibilites.
+The type of object attributes must match the Adabas types. This means a numeric type in Adabas must be a Javascript type of number. These types are validated during the processing and an error is thrown if there are incompatibilites.
 
 #### Multiple Fields
 
@@ -87,7 +87,7 @@ A periodic group is an array of Javascript objects.
 
 #### Data Representation Example
 
-Below is an example of an object
+Below is an example of an object:
 
 ```javascript
 {
@@ -116,7 +116,7 @@ The constructor has the file number as parameter.
 
 #### Fields
 
-For each field that is access the following information must be provided:
+For each field that is accessed the following information must be provided:
 
 * type (regular field, multiple field, periodic group)
 * format
@@ -124,9 +124,9 @@ For each field that is access the following information must be provided:
 * short name
 * options
 
-With the options long name, precision, max occurrence, etc. can be provided.
+With the options, the long name, precision, max occurrence, etc. can be provided.
 
-Each Adabas field is defined like this
+Each Adabas field is defined like this:
 
 ```javascript
 alpha(8, 'AA', { name: 'Personnel Id' })
@@ -134,7 +134,7 @@ alpha(8, 'AA', { name: 'Personnel Id' })
 
 Meaning that the Adabas field is of type 'alpha', has a length of 8 and the short name is 'AA'. In the returned object the attribute is named 'Personnel Id'.
 
-To add the fields to the map a function must be used. The following function are implemented:
+To add the fields to the map a function must be used. The following functions are implemented:
 
 * alpha (A)
 * binary (B)
@@ -156,7 +156,7 @@ For groups another function must be used where instead of the length a map for t
 group(FullName, 'AB', { name: 'FullName' }) // group
 ```
 
-Periodic groups are very simular to groups. The difference is that occ attribute is set in the options:
+Periodic groups are similar to groups. The difference is that the 'occ' attribute is set in the options:
 
 ```javascript
 group(Income, 'AQ', { name: 'Income', occ: 6 }) // periodic group
@@ -211,7 +211,7 @@ The *Adabas* class does the Adabas calls.
 
 #### Adabas Constructor
 
-The Adabas class has the database number as required parameter. Options for multifetch or logging can be added:
+The Adabas class has the database number as a required parameter. Options for multifetch or logging can be added:
 
 ```javascript
 const adabas = new Adabas('localhost', 49152, { multifetch: 20 } );
@@ -221,7 +221,7 @@ const adabas = new Adabas('localhost', 49152, { multifetch: 20 } );
 
 The *create*, *read*, *update* and *delete* methods need the map or a file number as parameter. If the file number is provided the File Description Table of the file is read and a map containing all fields is created from these definitions.
 
-Each command has some parameter provided as an object to control the command. At minimum a map or file number must be provided. See examples below.
+Each command has some parameters provided as an object to control the command. At least a map or file number must be provided. See examples below.
 
 The following parameters are supported:
 
@@ -280,7 +280,7 @@ Parameter:
 * criteria: return only objects that meet the criteria
 * object: that is stored
 
-Update the corresponding record where 'Personnel Id' equals to 'Test1234' with object 'update':
+Update the corresponding record where 'Personnel Id' equals 'Test1234' with object 'update':
 
 ```javascript
 adabas.update( { map: empl, criteria: 'Personnel Id=Test1234', object: update } );
@@ -293,7 +293,7 @@ Parameter:
 * map/fnr: map or file number
 * criteria: return only objects that meet the criteria
 
-Delete record where 'Personnel Id' equals to 'Test1234':
+Delete record where 'Personnel Id' equals 'Test1234':
 
 ```javascript
 adabas.delete( {map: empl, criteria: 'Personnel Id=Test1234' } );
@@ -313,7 +313,7 @@ Performs a close of the database.
 
 ## Know Problems
 
-* Alpha fields with length 0 and LOB fields are currently not supported
+* Alpha fields with length 0 and LOB fields are currently not supported.
 
 ## Dislaimer
 
