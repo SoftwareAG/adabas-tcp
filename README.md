@@ -311,7 +311,7 @@ Performs a backout of this transaction.
 
 Performs a close of the database.
 
-## Know Problems
+## Known Problems
 
 * Alpha fields with length 0 and LOB fields are currently not supported.
 
