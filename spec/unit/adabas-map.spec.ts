@@ -160,35 +160,35 @@ describe('Adabas Map Test Suite', () => {
         const alpha = new AdabasMap().alpha(10, 'AA', { name: 'alpha' });
         expect(() => {
             alpha.validate({ alpha: 123 });
-        }).toThrowError('child "alpha" fails because ["alpha" must be a string]');
+        }).toThrowError('"alpha" must be a string');
     });
 
     test('expect that an validation error when wrong format an fixed field is set', () => {
         const fixed = new AdabasMap().fixed(8, 'AA', { name: 'fixed' });
         expect(() => {
             fixed.validate({ fixed: 'abc' });
-        }).toThrowError('child "fixed" fails because ["fixed" must be a number]');
+        }).toThrowError('"fixed" must be a number');
     });
 
     test('expect that an validation error when wrong format an packed field is set', () => {
         const packed = new AdabasMap().packed(10, 'AA', { name: 'packed' });
         expect(() => {
             packed.validate({ packed: 'abc' });
-        }).toThrowError('child "packed" fails because ["packed" must be a number]');
+        }).toThrowError('"packed" must be a number');
     });
 
     test('expect that an validation error when wrong format an unpacked field is set', () => {
         const unpacked = new AdabasMap().unpacked(10, 'AA', { name: 'unpacked' });
         expect(() => {
             unpacked.validate({ unpacked: 'abc' });
-        }).toThrowError('child "unpacked" fails because ["unpacked" must be a number]');
+        }).toThrowError('"unpacked" must be a number');
     });
 
     test('expect that an validation error when wrong format an float field is set', () => {
         const float = new AdabasMap().float(8, 'AA', { name: 'float' });
         expect(() => {
             float.validate({ float: 'abc' });
-        }).toThrowError('child "float" fails because ["float" must be a number]');
+        }).toThrowError('float" must be a number');
     });
 
     test('expect that an validation error when a group is not an object', () => {
@@ -196,14 +196,14 @@ describe('Adabas Map Test Suite', () => {
         const map = new AdabasMap().group(group, 'GR', { name: 'group' });
         expect(() => {
             map.validate({ group: 'abc' });
-        }).toThrowError('child "group" fails because ["group" must be an object]');
+        }).toThrowError('"group" must be of type object');
     });
 
     test('expect that an validation error when a multiple field is not an array', () => {
         const multi = new AdabasMap().alpha(10, 'AA', { name: 'alpha', occ: 10 });
         expect(() => {
             multi.validate({ alpha: 'abc' });
-        }).toThrowError('child "alpha" fails because ["alpha" must be an array]');
+        }).toThrowError('"alpha" must be an array');
     });
 
     test('expect that an validation error when a periodic is not an array', () => {
@@ -211,14 +211,14 @@ describe('Adabas Map Test Suite', () => {
         const map = new AdabasMap().group(group, 'GR', { name: 'group', occ: 10 });
         expect(() => {
             map.validate({ group: 'abc' });
-        }).toThrowError('child "group" fails because ["group" must be an array]');
+        }).toThrowError('group" must be an array');
     });
 
     test('expect that an validation error when more than max occ of a multiple field is provided', () => {
         const multi = new AdabasMap().alpha(10, 'AA', { name: 'alpha', occ: 2 });
         expect(() => {
             multi.validate({ alpha: ['a', 'b', 'c'] });
-        }).toThrowError('child "alpha" fails because ["alpha" must contain less than or equal to 2 items]');
+        }).toThrowError('"alpha" must contain less than or equal to 2 items');
     });
 
     test('expect that an validation error when more than max occ of a periodic field is provided', () => {
@@ -226,7 +226,7 @@ describe('Adabas Map Test Suite', () => {
         const map = new AdabasMap().group(group, 'GR', { name: 'group', occ: 2 });
         expect(() => {
             map.validate({ group: [{ alpha: 'a' }, { alpha: 'b' }, { alpha: 'c' }] });
-        }).toThrowError('child "group" fails because ["group" must contain less than or equal to 2 items]');
+        }).toThrowError('"group" must contain less than or equal to 2 items');
     });
 
     test('expect that the toJavascript method works correctly', () => {

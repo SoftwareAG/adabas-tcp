@@ -17,7 +17,7 @@
  *
  */
 
-import Joi = require('@hapi/joi');
+import Joi = require('joi');
 
 import { Int64LE } from 'int64-buffer';
 
@@ -47,7 +47,7 @@ export class AdabasMap {
     constructor(fnr = 0) {
         this._fnr = fnr;
         this._list = [];
-        this.schema = {}; // schema for joi validation
+        this.schema = Joi.object(); // schema for joi validation
     }
 
     get fnr(): number {
@@ -97,12 +97,12 @@ export class AdabasMap {
         if (occ === 0) {
             object['type'] = TYPE_REGULAR;
             this._list.push(object);
-            this.schema[longName] = validate;
+            this.appendSchema(longName, validate);
         } else {
             object['type'] = TYPE_MULTIPLE;
             object['occ'] = occ;
             this._list.push(object);
-            this.schema[longName] = Joi.array().max(occ);
+            this.appendSchema(longName, Joi.array().max(occ));
         }
         return this;
     }
@@ -155,7 +155,7 @@ export class AdabasMap {
         const longName = options && options.name ? options.name : shortName;
         if (occ == 0) {
             this._list.push({ type: TYPE_GROUP, shortName, longName, format: 'GR', map, options });
-            this.schema[longName] = Joi.object();
+            this.appendSchema(longName, Joi.object());
         }
         else {
             // recalulate offset in pe map
@@ -167,7 +167,7 @@ export class AdabasMap {
             //     len = item.occ ? item.length * item.occ : item.length;
             // });
             this._list.push({ type: TYPE_PERIODIC, shortName, longName, format: 'PE', occ, map, options });
-            this.schema[longName] = Joi.array().max(occ);
+            this.appendSchema(longName, Joi.array().max(occ));
         }
         return this;
     }
@@ -283,6 +283,12 @@ export class AdabasMap {
             }
         })
         return buffer;
+    }
+
+    private appendSchema(name: string, object: any) {
+        const obj: any = {};
+        obj[name] = object;
+        this.schema = this.schema.append(obj);
     }
 
     private initBuffer(size: number): Buffer {
@@ -631,7 +637,7 @@ export class AdabasMap {
     }
 
     validate(object: any): void {
-        const result = Joi.validate(object, this.schema);
+        const result = this.schema.validate(object);
         if (result.error) {
             throw new Error(result.error.message);
         }

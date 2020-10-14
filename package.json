@@ -26,10 +26,10 @@
         "dist/**/*"
     ],
     "dependencies": {
-        "@hapi/joi": "^15.1.1",
-        "@types/hapi__joi": "^15.0.4",
+        "@types/joi": "^14.3.4",
         "@types/node": "^13.9.8",
-        "int64-buffer": "^0.99.1007"
+        "int64-buffer": "^0.99.1007",
+        "joi": "^17.2.1"
     },
     "devDependencies": {
         "@types/config": "0.0.36",
