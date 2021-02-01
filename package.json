@@ -1,6 +1,6 @@
 {
     "name": "adabas-tcp",
-    "version": "1.0.3",
+    "version": "1.0.4",
     "description": "High level Adabas access package using a TCP connection",
     "keywords": [
         "adabas",
