@@ -26,7 +26,7 @@ import { ControlBlock } from './control-block';
 
 export class FileDescriptionTable {
 
-    private encoding: string | undefined;
+    private encoding: BufferEncoding;
 
     private client: AdabasTcp;
 

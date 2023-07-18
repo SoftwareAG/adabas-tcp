@@ -25,7 +25,7 @@ export class ControlBlock {
     private static readonly LEN             = 192; // overall length of the control buffer
     private static readonly LEN_OFFSET      =   4; // offset of the length field
 
-    private encoding: string | undefined;
+    private encoding: BufferEncoding;
     private buffer: Buffer;
 
     constructor() {

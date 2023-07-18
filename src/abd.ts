@@ -21,7 +21,7 @@ import { Int64LE } from 'int64-buffer';
 
 export class Abd {
 
-    private encoding: string | undefined;
+    private encoding: BufferEncoding;
 
     private abd: Buffer;
 

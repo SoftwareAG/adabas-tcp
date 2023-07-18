@@ -313,7 +313,7 @@ export class Adabas {
     private open(fnr: number, mode = 'UPD'): Promise<void> {
         return new Promise(async (resolve, reject) => {
             if (this.status === Status.Open) {
-                resolve(null);
+                resolve();
             }
             else {
                 const cb = new ControlBlock();
@@ -329,7 +329,7 @@ export class Adabas {
                     reject(this.getMessage(this.cb));
                 }
                 this.status = Status.Open;
-                resolve(null);
+                resolve();
             }
         });
     }
