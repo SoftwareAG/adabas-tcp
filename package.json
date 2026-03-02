@@ -26,7 +26,7 @@
         "dist/**/*"
     ],
     "dependencies": {
-        "@types/node": "^20.4.2",
+        "@types/node": "^25.3.3",
         "int64-buffer": "^1.0.1",
         "joi": "^18.0.2",
         "pino": "^10.3.1"
