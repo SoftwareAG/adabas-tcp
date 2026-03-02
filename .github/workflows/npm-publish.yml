@@ -5,19 +5,28 @@ on:
   release:
     types: [published]
 
-permissions:
-  id-token: write
-  contents: read
-
 jobs:
-  build:
+  publish:
     runs-on: ubuntu-latest
+    environment: npm    
+    permissions:
+      id-token: write
+      contents: read
+      
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          node-version: 22
-          registry-url: https://registry.npmjs.org/
-      - run: npm ci
-      - run: npm run build --if-present
-      - run: npm publish
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (if needed)
+        run: npm run build --if-present
+
+      - name: Publish to npm
+        run: npm publish --provenance --access public
