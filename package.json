@@ -19,7 +19,7 @@
     "license": "Apache-2.0",
     "repository": {
         "type": "git",
-        "url": "https://github.com/SoftwareAG/adabas-tcp.git"
+        "url": "git+https://github.com/SoftwareAG/adabas-tcp.git"
     },
     "bugs": "https://github.com/SoftwareAG/adabas-tcp/issues",
     "files": [
