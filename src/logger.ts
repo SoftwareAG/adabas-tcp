@@ -1,5 +1,5 @@
 import * as path from 'path';
-import * as pino from 'pino';
+import pino from 'pino';
 
 // ---------------------------------------------------------------------------
 // Log level
