@@ -1,5 +1,5 @@
 /*
- * Copyright © 2019-2020 Software AG, Darmstadt, Germany and/or its licensors
+ * Copyright © 2019-2026 Software GmbH, Darmstadt, Germany and/or its licensors
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -19,7 +19,25 @@
 
 import { ControlBlock } from './control-block';
 
-const messages: any = {
+interface AdabasSubMessages {
+    [subCode: number]: string;
+}
+
+interface AdabasMessageEntry {
+    text: string;
+    sub?: AdabasSubMessages;
+}
+
+interface AdabasMessageTable {
+    [responseCode: number]: AdabasMessageEntry;
+}
+
+export interface AdabasMessageResult {
+    message: string;
+    explanation: string;
+}
+
+const messages: AdabasMessageTable = {
     3: {
         text: 'An end-of-file or end-of-list condition was detected.'
     },
@@ -101,7 +119,7 @@ const messages: any = {
 }
 
 export class AdabasMessage {
-    getMessage(cb: ControlBlock): any {
+    getMessage(cb: ControlBlock): AdabasMessageResult {
         const message = 'Adabas response code ' + cb.rsp + ' received.';
         let explanation = 'not available';
         if (messages[cb.rsp]) {

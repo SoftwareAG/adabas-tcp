@@ -1,5 +1,5 @@
 /*
- * Copyright © 2019-2020 Software AG, Darmstadt, Germany and/or its licensors
+ * Copyright © 2019-2026 Software GmbH, Darmstadt, Germany and/or its licensors
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -81,5 +81,10 @@ export function getFields(buffer: Buffer) {
         mbe.push({ len, error, isn });
     }
     return { num, mbe };
+}
+
+export function padBuffer(buf: Buffer, targetLength: number): Buffer {
+    const missing = targetLength - buf.length;
+    return missing > 0 ? Buffer.concat([buf, Buffer.alloc(missing)]) : buf;
 }
 

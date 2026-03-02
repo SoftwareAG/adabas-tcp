@@ -1,5 +1,5 @@
 /*
- * Copyright © 2019-2020 Software AG, Darmstadt, Germany and/or its licensors
+ * Copyright © 2019-2026 Software GmbH, Darmstadt, Germany and/or its licensors
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -17,6 +17,6 @@
  *
  */
 
- export * from './adabas'; 
+export * from './adabas'; 
 export * from './adabas-map';
 export * from './interfaces';

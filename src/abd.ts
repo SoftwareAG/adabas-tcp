@@ -1,5 +1,5 @@
 /*
- * Copyright © 2019-2020 Software AG, Darmstadt, Germany and/or its licensors
+ * Copyright © 2019-2026 Software GmbH, Darmstadt, Germany and/or its licensors
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -18,52 +18,63 @@
  */
 
 import { Int64LE } from 'int64-buffer';
+import { BufferId } from './adabas-buffer-structure';
 
 export class Abd {
 
-    private encoding: BufferEncoding;
+    // Adabas Buffer Descriptor (ABD) — 48-byte wire structure
+    private static readonly OFFSET_LEN = 0; // UInt16LE — structure length (always 48)
+    private static readonly OFFSET_VER = 2; // 2 bytes  — version ('G2')
+    private static readonly OFFSET_ID = 4; // 1 byte   — buffer type ('R','F','S','V','I','M')
+    private static readonly OFFSET_LOC = 6; // 1 byte   — location ('I' = indirect)
+    private static readonly OFFSET_SIZE = 16; // Int64LE  — allocated buffer size
+    private static readonly OFFSET_SEND = 24; // Int64LE  — bytes to send
+    private static readonly OFFSET_RECV = 32; // Int64LE  — bytes received
+
+    private readonly encoding: BufferEncoding = 'utf8';
 
     private abd: Buffer;
 
     constructor() {
         this.abd = Buffer.alloc(48);
-        this.abd.writeUInt16LE(48, 0);            // len
-        this.abd.write('G2', 2, 2);               // ver
-        this.abd.write('I', 6, 1);                // loc
+        this.abd.writeUInt16LE(48, Abd.OFFSET_LEN);           
+        this.abd.write('G2', Abd.OFFSET_VER, 2, this.encoding);          
+        this.abd.write('I', Abd.OFFSET_LOC, 1, this.encoding);    
     }
 
     get buffer(): Buffer {
         return this.abd;
     }
     set buffer(buffer: Buffer) {
+        if (buffer.length < 48) {
+            throw new Error(`ABD buffer must be at least 48 bytes, got ${buffer.length}.`);
+        }
         this.abd = buffer;
     }
 
-    get id(): string {
-        return this.abd.toString(this.encoding, 4, 5);
+    get id(): BufferId {
+        return this.abd.toString(this.encoding, Abd.OFFSET_ID, Abd.OFFSET_ID + 1) as BufferId;
     }
-    set id(value: string) {
-        this.abd.write(value, 4, 1);
-    }
-
-    get size(): number {
-        return new Int64LE(this.abd, 16).toNumber();
-    }
-    set size(value: number) {
-        new Int64LE(value).toBuffer().copy(this.abd, 16, 0, 8);
+    set id(value: BufferId) {
+        this.abd.write(value, Abd.OFFSET_ID, 1);
     }
 
-    get send(): number {
-        return new Int64LE(this.abd, 24).toNumber();
-    }
-    set send(value: number) {
-        new Int64LE(value).toBuffer().copy(this.abd, 24, 0, 8);
+    get size(): number { return this.readInt64(Abd.OFFSET_SIZE); }
+    set size(value: number) { this.writeInt64(value, Abd.OFFSET_SIZE); }
+
+
+    get send(): number { return this.readInt64(Abd.OFFSET_SEND); }
+    set send(value: number) { this.writeInt64(value, Abd.OFFSET_SEND); }
+
+    get recv(): number { return this.readInt64(Abd.OFFSET_RECV); }
+    set recv(value: number) { this.writeInt64(value, Abd.OFFSET_RECV); }
+
+    private writeInt64(value: number, offset: number): void {
+        new Int64LE(value).toBuffer().copy(this.abd, offset, 0, 8);
     }
 
-    get recv(): number {
-        return new Int64LE(this.abd, 32).toNumber();
+    private readInt64(offset: number): number {
+        return new Int64LE(this.abd, offset).toNumber();
     }
-    set recv(value: number) {
-        new Int64LE(value).toBuffer().copy(this.abd, 32, 0, 8);
-    }
+
 }

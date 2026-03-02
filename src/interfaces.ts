@@ -1,5 +1,5 @@
 /*
- * Copyright © 2019-2020 Software AG, Darmstadt, Germany and/or its licensors
+ * Copyright © 2019-2026 Software GmbH, Darmstadt, Germany and/or its licensors
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -19,32 +19,84 @@
 
 import { AdabasBufferStructure } from './adabas-buffer-structure';
 import { ControlBlock } from './control-block';
-
 import { AdabasMap } from './adabas-map';
+import { LogEvent } from './adabas-call';
 
-export enum CallType { Create, Delete, Read, Update, Close, ET, BT, Undefined };
+// ---------------------------------------------------------------------------
+// CallType
+// ---------------------------------------------------------------------------
+
+export enum CallType { Create, Delete, Read, Update, Close, ET, BT, Undefined }
+
+// ---------------------------------------------------------------------------
+// Domain record types
+// ---------------------------------------------------------------------------
+
+/**
+ * A single Adabas record as returned to callers.
+ * The optional `_isn` field is injected by the driver to allow cursor tracking.
+ */
+export type AdabasRecord = Record<string, unknown> & { _isn?: number };
+
+/**
+ * Type of a structured field entry in the Adabas FDT (File Description Table).
+ * Kept here so both adabas.ts and file-description-table.ts share the same shape.
+ */
+export type FdtFieldType = 'PE' | 'GR';
+
+export interface FdtField {
+    level:    number;
+    name:     string;
+    type?:    FdtFieldType;
+    format?:  string;
+    length?:  number;
+    options?: string[];
+}
+
+/**
+ * Raw FDT data returned by the database — an array of typed field descriptors.
+ */
+export type FdtResult = FdtField[];
+
+// ---------------------------------------------------------------------------
+// CallData
+// ---------------------------------------------------------------------------
 
 export interface CallData {
     map?: AdabasMap;
     fnr?: number;
-    isn?: any;
-    object?: any;
+    /** Numeric ISN for direct record access; string range ("1-100") for bulk reads. */
+    isn?: number | string;
+    /** The record object to store or update. */
+    object?: AdabasRecord;
     criteria?: string;
     fields?: string[];
     sortedBy?: string;
     page?: number;
 }
 
+// ---------------------------------------------------------------------------
+// Options
+// ---------------------------------------------------------------------------
+
 export interface AdabasOptions {
     multifetch?: number;
-    log?: string[];
+    log?: LogEvent[];
 }
+
+// ---------------------------------------------------------------------------
+// Low-level payload
+// ---------------------------------------------------------------------------
 
 export interface PayloadData {
     cb: ControlBlock;
     abda: AdabasBufferStructure;
     uuid?: Buffer;
 }
+
+// ---------------------------------------------------------------------------
+// Map metadata
+// ---------------------------------------------------------------------------
 
 export interface MapData {
     type: string;
@@ -65,23 +117,36 @@ export interface MapOption {
     prec?: number;
 }
 
+// ---------------------------------------------------------------------------
+// Multifetch
+// ---------------------------------------------------------------------------
+
 export interface MultifetchElement {
     len: number;
     error: number;
     isn: number;
 }
 
+// ---------------------------------------------------------------------------
+// Queues
+// ---------------------------------------------------------------------------
+
+/**
+ * Entry in the TCP send queue (adabas-tcp layer).
+ */
 export interface QueueElement {
     data: Buffer;
-    resolve: Function;
-    reject: Function;
+    resolve: (value: Buffer) => void;
+    reject:  (reason: Error) => void;
 }
 
+/**
+ * Entry in the Adabas command queue.
+ * `_fn` holds the operation closure; `resolve` and `reject` settle the
+ * Promise that was returned to the original caller.
+ */
 export interface CommandQueue {
-    type: CallType;
-    data: CallData;
-    resolve: Function;
-    reject: Function;
+    _fn:     () => Promise<unknown>;
+    resolve: (value: unknown) => void;
+    reject:  (reason: Error)  => void;
 }
-
-
