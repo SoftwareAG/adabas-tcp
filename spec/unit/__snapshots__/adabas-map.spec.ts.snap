@@ -1,0 +1,25 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`AdabasMap toJs generates correct JavaScript map definition 1`] = `
+"const GR = new AdabasMap()
+	.alpha(3, 'GA')
+	.packed(9, 'GP')
+	.unpacked(9, 'GU', { occ: 5 })
+;
+const PE = new AdabasMap()
+	.alpha(3, 'P1')
+	.packed(9, 'PP')
+	.unpacked(9, 'PU', { occ: 5 })
+;
+const Map = new AdabasMap()
+	.alpha(8, 'AL')
+	.binary(20, 'BI')
+	.fixed(4, 'FI')
+	.float(8, 'FL')
+	.packed(4, 'PA')
+	.unpacked(4, 'UN')
+	.group(GR, 'GR')
+	.group(PE, 'PE', { occ: 5 })
+;
+"
+`;

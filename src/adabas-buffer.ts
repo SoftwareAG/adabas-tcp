@@ -1,5 +1,5 @@
 /*
- * Copyright © 2019-2020 Software AG, Darmstadt, Germany and/or its licensors
+ * Copyright © 2019-2026 Software GmbH, Darmstadt, Germany and/or its licensors
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -18,60 +18,35 @@
  */
 
 import { Abd } from './abd';
+import { BufferId } from './adabas-buffer-structure';
 
 export class AdabasBuffer {
     private _abd: Abd;
     private _buffer: Buffer;
 
-    constructor(type: string, buffer: Buffer) {
-        const len = buffer.length;
+    constructor(type: BufferId, buffer: Buffer) {
         this._abd = new Abd();
         this._abd.id = type;
-        this._abd.size = len;
-        this._abd.send = len;
-        this._abd.recv = len;
+        this._abd.size = buffer.length;
+        this._abd.send = buffer.length;
+        this._abd.recv = buffer.length;
         this._buffer = buffer;
     }
 
     get abd(): Abd {
         return this._abd;
     }
-    set abd(abd: Abd) {
-        this._abd = abd;
-    }
+    // set abd(abd: Abd) {
+    //     this._abd = abd;
+    // }
 
     get buffer(): Buffer {
         return this._buffer;
     }
     set buffer(buffer: Buffer) {
         this._buffer = buffer;
-    }
-
-    static newAbd(type: string, buffer: Buffer): AdabasBuffer {
-        return new AdabasBuffer(type, buffer);
-    }
-
-    static newRb(buffer: Buffer): AdabasBuffer {
-        return this.newAbd('R', buffer);
-    }
-
-    static newFb(buffer: Buffer): AdabasBuffer {
-        return this.newAbd('F', buffer);
-    }
-
-    static newIb(buffer: Buffer): AdabasBuffer {
-        return this.newAbd('I', buffer);
-    }
-
-    static newVb(buffer: Buffer): AdabasBuffer {
-        return this.newAbd('V', buffer);
-    }
-
-    static newSb(buffer: Buffer): AdabasBuffer {
-        return this.newAbd('S', buffer);
-    }
-
-    static newMb(buffer: Buffer): AdabasBuffer {
-        return this.newAbd('M', buffer);
+        this._abd.size = buffer.length;
+        this._abd.send = buffer.length;
+        this._abd.recv = buffer.length;
     }
 }

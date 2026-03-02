@@ -1,5 +1,5 @@
 /*
- * Copyright © 2019-2020 Software AG, Darmstadt, Germany and/or its licensors
+ * Copyright © 2019-2026 Software GmbH, Darmstadt, Germany and/or its licensors
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -18,714 +18,683 @@
  */
 
 import { ControlBlock } from './control-block';
-import { CallType, CallData, PayloadData, AdabasOptions, CommandQueue } from './interfaces';
+import { CallType, CallData, PayloadData, AdabasOptions, CommandQueue, AdabasRecord, FdtResult } from './interfaces';
 import { AdabasConnect } from './adabas-connect';
 import { AdabasTcp } from './adabas-tcp';
 import { AdabasBufferStructure } from './adabas-buffer-structure';
-import { AdabasCall } from './adabas-call';
+import { AdabasCall, LogEvent } from './adabas-call';
 import { AdabasMap } from './adabas-map';
-import { getFields } from './common';
+import { getFields, hexdump } from './common';
+import logger from './logger';
 import { AdabasMessage } from './adabas-message';
 import { FileDescriptionTable } from './file-description-table';
 
-enum Status { Close, Open };
+// ---------------------------------------------------------------------------
+// Constants — no more magic strings scattered through the code
+// ---------------------------------------------------------------------------
+
+const enum AdabasCommand {
+    ReadISN      = 'L1',
+    ReadSorted   = 'L3',
+    Search       = 'S1',
+    Store        = 'N1',
+    StoreISN     = 'N2',
+    Update       = 'A1',
+    Delete       = 'E1',
+    Hold         = 'HI',
+    EndTrans     = 'ET',
+    BackoutTrans = 'BT',
+    Open         = 'OP',
+    Close        = 'CL',
+}
+
+const DEFAULT_MULTIFETCH = 10;
+const MULTIFETCH_ENTRY_SIZE = 16;
+const MULTIFETCH_HEADER_SIZE = 4;
+
+// ---------------------------------------------------------------------------
+// Domain types
+// ---------------------------------------------------------------------------
+
+/**
+ * Internal buffers produced by the Read path of `criteria()`.
+ */
+interface SearchBuffers {
+    sb: Buffer;
+    vb: Buffer;
+}
+
+/**
+ * Extended CallData used internally by the cursor implementation.
+ * `_cursorISN` carries the last-seen ISN between `next()` calls without
+ * polluting the public `CallData` interface.
+ */
+interface CursorCallData extends CallData {
+    _cursorISN?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Internal types
+// ---------------------------------------------------------------------------
+
+/** Cursor returned by readCursor() for explicit pagination control. */
+export interface AdabasCursor {
+    next(): Promise<AdabasRecord[]>;
+    hasMore(): boolean;
+    reset(): void;
+}
+
+/** Internal connection status */
+const enum Status { Close, Open }
+
+// ---------------------------------------------------------------------------
+// Main class
+// ---------------------------------------------------------------------------
 
 export class Adabas {
-    private host: string;
-    private port: number;
+    private readonly host: string;
+    private readonly port: number;
+
     private uuid: Buffer;
     private client: AdabasTcp;
     private adabas: AdabasCall;
-    private multifetch = 10;
-    private connected: boolean;
+    private multifetch: number;
+    private connected = false;
     private cb: ControlBlock;
     private map: AdabasMap;
     private type: CallType = CallType.Undefined;
-    private message: AdabasMessage;
-    private fdt: object;
-    private log: string[];
-    private queue: CommandQueue[] = [];
+    private readonly message: AdabasMessage;
+    private log: LogEvent[];
+
+    // Queue management
+    private readonly queue: CommandQueue[] = [];
     private executing = false;
+
+    // Session state
     private status: Status = Status.Close;
-    private lastISN = 0;
-    private pageDone = false;
 
     constructor(host: string, port: number, options?: AdabasOptions) {
-        if (options) this.setOptions(options);
-
         this.host = host;
         this.port = port;
+        this.multifetch = DEFAULT_MULTIFETCH;
 
-        this.connected = false;
+        if (options) this.applyOptions(options);
 
-        this.cb = new ControlBlock();
-        this.client = new AdabasTcp(host, port);
-
-        this.adabas = new AdabasCall(this.client, this.log);
-
+        this.cb      = new ControlBlock();
+        this.client  = new AdabasTcp(host, port);
+        this.adabas  = new AdabasCall(this.client, this.log);
         this.message = new AdabasMessage();
     }
 
-    private setOptions(options: AdabasOptions) {
-        this.multifetch = options.multifetch || 10;
-        this.log = options.log || null;
+    // ---------------------------------------------------------------------------
+    // Configuration
+    // ---------------------------------------------------------------------------
+
+    private applyOptions(options: AdabasOptions): void {
+        this.multifetch = options.multifetch ?? DEFAULT_MULTIFETCH;
+        this.log        = options.log ?? null;
     }
 
+    // ---------------------------------------------------------------------------
+    // Connection
+    // ---------------------------------------------------------------------------
 
     async connect(): Promise<Buffer> {
-        this.uuid = await new AdabasConnect(this.client).connect();
+        this.uuid      = await new AdabasConnect(this.client).connect();
         this.connected = true;
         return this.uuid;
     }
 
-    public readFDT(callData: CallData = {}): Promise<any> {
-        return new Promise(async (resolve, reject) => {
-            if (!callData.fnr) reject('File number is not provided');
-
-            try {
-                this.fdt = await new FileDescriptionTable(this.host, this.port).getFDT(callData.fnr);
-                if (JSON.stringify(this.fdt) == "[]") reject('File is not exist in the database');
-                resolve(this.fdt);
-            }
-            catch (error) {
-                reject(error);
-            }
-        });
-    }
-
-    public create(callData: CallData = {}): Promise<any> {
-        return new Promise(async (resolve, reject) => {
-            if (!this.executing) {
-                this.exeCreate(callData, resolve, reject);
-            }
-            else {
-                this.queue.push({ type: CallType.Create, data: callData, resolve, reject });
-            }
-        });
-    }
-
-    private async exeCreate(callData: CallData = {}, resolve: Function, reject: Function): Promise<any> {
-        // validate input
-        if (!callData.object) {
-            reject('No object provided.');
-        }
-        else {
-            this.executing = true;
-            this.type = CallType.Create;
-            // input data
-            this.map = await this.getMap(callData);
-            try {
-                resolve(await this.modify(callData.object, callData.isn));
-            } catch (error) {
-                reject(error);
-            }
-        }
-        this.nextCommand();
-    }
-
-    public read(callData: CallData = {}): Promise<any> {
-        return new Promise(async (resolve, reject) => {
-            if (!this.executing) {
-                this.exeRead(callData, resolve, reject);
-            }
-            else {
-                this.queue.push({ type: CallType.Read, data: callData, resolve, reject });
-            }
-        });
-    }
-
-    private async exeRead(callData: CallData = {}, resolve: Function, reject: Function): Promise<any> {
-        this.executing = true;
-        this.type = CallType.Read;
-        // input data
-        this.map = await this.getMap(callData);
-        await this.open(this.map.fnr);
-        try {
-            if (callData.isn) {
-                if (typeof (callData.isn) == 'number') {
-                    resolve(await this.get(callData.isn));
-                }
-                else if (typeof (callData.isn) == 'string') {
-                    resolve(await this.getAll(callData));
-                }
-                else {
-                    reject('Invalid type for ISN: ' + typeof (callData.isn));
-                }
-            }
-            else {
-                resolve(await this.getAll(callData));
-            }
-        } catch (error) {
-            reject(error);
-        }
-        this.nextCommand();
-    }
-
-    public update(callData: CallData = {}): Promise<number> {
-        return new Promise(async (resolve, reject) => {
-            if (!this.executing) {
-                this.exeUpdate(callData, resolve, reject);
-            }
-            else {
-                this.queue.push({ type: CallType.Update, data: callData, resolve, reject });
-            }
-        });
-    }
-
-    private async exeUpdate(callData: CallData = {}, resolve: Function, reject: Function) {
-        let message = '';
-        if (!callData.criteria && !callData.isn) message = 'no criteria or ISN provided.';
-        if (!callData.object) message = 'no object provided.';
-        if (message.length > 0) {
-            reject(message);
-        }
-        else {
-            this.executing = true;
-            this.type = CallType.Update;
-            // input data
-            this.map = await this.getMap(callData);
-            await this.open(this.map.fnr);
-            try {
-                const isn = callData.isn ? callData.isn : await this.criteria(callData.criteria);
-                await this.modify(callData.object, isn);
-                resolve(isn);
-            } catch (error) {
-                reject(error);
-            }
-        }
-        this.nextCommand();
-    }
-
-    public delete(callData: CallData = {}): Promise<number> {
-        return new Promise(async (resolve, reject) => {
-            if (!this.executing) {
-                this.exeDelete(callData, resolve, reject);
-            }
-            else {
-                this.queue.push({ type: CallType.Delete, data: callData, resolve, reject });
-            }
-        });
-    }
-
-    private async exeDelete(callData: CallData = {}, resolve: Function, reject: Function) {
-        if (!callData.criteria) {
-            reject('no criteria defined.');
-        }
-        else {
-            this.executing = true;
-            this.type = CallType.Delete;
-            // input data
-            this.map = await this.getMap(callData);
-            await this.open(this.map.fnr);
-            try {
-                resolve(await this.criteria(callData.criteria));
-            } catch (error) {
-                reject(error);
-            }
-        }
-        this.nextCommand();
-    }
-
-    public close(): Promise<boolean> {
-        return new Promise(async (resolve, reject) => {
-            if (!this.executing) {
-                this.exeClose(resolve, reject);
-            }
-            else {
-                this.queue.push({ type: CallType.Close, data: {}, resolve, reject });
-            }
-        });
-    }
-
-    private async exeClose(resolve: Function, reject: Function) {
-        this.executing = true;
-        this.cb.init({
-            cmd: 'CL'
-        });
-        await this.callAdabas();
-        if (this.cb.rsp != 0) {
-            reject(this.getMessage(this.cb));
-        }
-        else {
-            resolve(true);
-        }
-        this.status = Status.Close;
-        this.nextCommand();
-    }
-
-    public endTransaction(): Promise<boolean> {
-        return new Promise(async (resolve, reject) => {
-            if (!this.executing) {
-                this.exeEndTransaction(resolve, reject);
-            }
-            else {
-                this.queue.push({ type: CallType.ET, data: {}, resolve, reject });
-            }
-        });
-    }
-
-    private async exeEndTransaction(resolve: Function, reject: Function) {
-        this.executing = true;
-        this.cb.init({
-            cmd: 'ET'
-        });
-        await this.callAdabas()
-        if (this.cb.rsp != 0) {
-            reject(this.getMessage(this.cb));
-        }
-        else {
-            resolve(true);
-        }
-        this.nextCommand();
-    }
-
-    public backoutTransaction(): Promise<boolean> {
-        return new Promise(async (resolve, reject) => {
-            if (!this.executing) {
-                this.exeBackoutTransaction(resolve, reject);
-            }
-            else {
-                this.queue.push({ type: CallType.BT, data: {}, resolve, reject });
-            }
-        });
-    }
-
-    private async exeBackoutTransaction(resolve: Function, reject: Function) {
-        this.executing = true;
-        this.cb.init({
-            cmd: 'BT'
-        });
-        this.callAdabas();
-        if (this.cb.rsp != 0) {
-            reject(this.getMessage(this.cb));
-        }
-        else {
-            resolve(true);
-        }
-        this.nextCommand();
-    }
-
-    public disconnect(): void {
+    disconnect(): void {
         this.client.close();
         this.connected = false;
     }
 
-    private open(fnr: number, mode = 'UPD'): Promise<void> {
-        return new Promise(async (resolve, reject) => {
-            if (this.status === Status.Open) {
-                resolve();
-            }
-            else {
-                const cb = new ControlBlock();
-                cb.init({
-                    cmd: 'OP'
-                });
+    // ---------------------------------------------------------------------------
+    // Public API — all routed through the async queue
+    // ---------------------------------------------------------------------------
 
-                const abda = new AdabasBufferStructure();
-                abda.newFb(Buffer.alloc(0));
-                abda.newRb(Buffer.from(mode + '=' + fnr + '.'));
-                await this.callAdabas(abda, cb);
-                if (this.cb.rsp != 0) {
-                    reject(this.getMessage(this.cb));
+    public readFDT(callData: CallData = {}): Promise<FdtResult> {
+        if (!callData.fnr) return Promise.reject(new Error('File number is not provided'));
+
+        return new FileDescriptionTable(this.host, this.port, this.log)
+            .getFDT(callData.fnr)
+            .then((fdt: FdtResult) => {
+                if (Array.isArray(fdt) && fdt.length === 0) {
+                    throw new Error('File does not exist in the database');
                 }
-                this.status = Status.Open;
-                resolve();
-            }
+                return fdt;
+            });
+    }
+
+    public create(callData: CallData = {}): Promise<number> {
+        return this.enqueue(() => this.exeCreate(callData));
+    }
+
+    public read(callData: CallData = {}): Promise<number | AdabasRecord | AdabasRecord[]> {
+        return this.enqueue(() => this.exeRead(callData));
+    }
+
+    public update(callData: CallData = {}): Promise<number> {
+        return this.enqueue(() => this.exeUpdate(callData));
+    }
+
+    public delete(callData: CallData = {}): Promise<number> {
+        return this.enqueue(() => this.exeDelete(callData));
+    }
+
+    public close(): Promise<boolean> {
+        return this.enqueue(() => this.exeClose());
+    }
+
+    public endTransaction(): Promise<boolean> {
+        return this.enqueue(() => this.exeEndTransaction());
+    }
+
+    public backoutTransaction(): Promise<boolean> {
+        return this.enqueue(() => this.exeBackoutTransaction());
+    }
+
+    /**
+     * Returns a cursor for explicit page-by-page iteration.
+     * Avoids storing pagination state on the instance.
+     */
+    public readCursor(callData: CallData = {}): AdabasCursor {
+        let lastISN  = 0;
+        let pageDone = false;
+
+        return {
+            hasMore: () => !pageDone,
+            reset:   () => { lastISN = 0; pageDone = false; },
+            next:    (): Promise<AdabasRecord[]> => {
+                if (pageDone) return Promise.resolve([]);
+
+                const pageData: CursorCallData = { ...callData, _cursorISN: lastISN };
+
+                return this.enqueue(() => this.exeRead(pageData)).then((result) => {
+                    const records = result as AdabasRecord[];
+                    if (records.length === 0 || records.length < (callData.page ?? Infinity)) {
+                        pageDone = true;
+                    }
+                    if (records.length > 0) {
+                        const last = records[records.length - 1];
+                        lastISN = last._isn ?? lastISN;
+                    }
+                    return records;
+                });
+            },
+        };
+    }
+
+    // ---------------------------------------------------------------------------
+    // Queue engine
+    // ---------------------------------------------------------------------------
+
+    /**
+     * Serialises all public operations through a single async queue.
+     * Guarantees the `executing` flag is always cleared in `finally`.
+     */
+    private enqueue<T>(fn: () => Promise<T>): Promise<T> {
+        if (!this.executing) {
+            this.executing = true;
+            return fn().finally(() => this.drainQueue());
+        }
+        return new Promise<T>((resolve, reject) => {
+            const entry: CommandQueue = {
+                _fn:     fn as () => Promise<unknown>,
+                resolve: resolve as (value: unknown) => void,
+                reject,
+            };
+            this.queue.push(entry);
         });
     }
 
-    private async nextCommand() {
-        if (this.queue.length > 0) {
-            const element = this.queue.shift();
-            switch (element.type) {
-                case CallType.Create:
-                    this.exeCreate(element.data, element.resolve, element.reject);
-                    break;
-                case CallType.Read:
-                    this.exeRead(element.data, element.resolve, element.reject);
-                    break;
-                case CallType.Update:
-                    this.exeUpdate(element.data, element.resolve, element.reject);
-                    break;
-                case CallType.Delete:
-                    this.exeDelete(element.data, element.resolve, element.reject);
-                    break;
-                case CallType.Close:
-                    this.exeClose(element.resolve, element.reject);
-                    break;
-                case CallType.ET:
-                    this.exeEndTransaction(element.resolve, element.reject);
-                    break;
-                case CallType.BT:
-                    this.exeBackoutTransaction(element.resolve, element.reject);
-                    break;
-                default:
-                    break;
-            }
-        }
-        if (this.queue.length === 0) this.executing = false;
+    private drainQueue(): void {
+        this.executing = false;
+        if (this.queue.length === 0) return;
+
+        const entry = this.queue.shift();
+        this.executing = true;
+        entry._fn().then(entry.resolve).catch(entry.reject).finally(() => this.drainQueue());
     }
 
-    private async callAdabas(abda: AdabasBufferStructure = null, cb: ControlBlock = this.cb): Promise<PayloadData> {
+    // ---------------------------------------------------------------------------
+    // Operation implementations
+    // ---------------------------------------------------------------------------
+
+    private async exeCreate(callData: CallData): Promise<number> {
+        this.validateCallData(callData, ['object']);
+        this.type = CallType.Create;
+        this.map  = await this.getMap(callData);
+        return this.modify(callData.object as AdabasRecord, callData.isn as number | undefined);
+    }
+
+    private async exeRead(callData: CursorCallData): Promise<number | AdabasRecord | AdabasRecord[]> {
+        this.type = CallType.Read;
+        this.map  = await this.getMap(callData);
+        await this.open(this.map.fnr);
+        if (callData.isn !== undefined) {
+            if (typeof callData.isn === 'number') {
+                return this.get(callData.isn);
+            }
+            if (typeof callData.isn === 'string') {
+                return this.getAll(callData);
+            }
+            throw new Error(`Invalid type for ISN: ${typeof callData.isn}`);
+        }
+        return this.getAll(callData);
+    }
+
+    private async exeUpdate(callData: CallData): Promise<number> {
+        if (!callData.criteria && !callData.isn) {
+            throw new Error('No criteria or ISN provided.');
+        }
+        this.validateCallData(callData, ['object']);
+        this.type = CallType.Update;
+        this.map  = await this.getMap(callData);
+        await this.open(this.map.fnr);
+
+        const isn = callData.isn
+            ? (callData.isn as number)
+            : await this.criteriaToIsn(callData.criteria);
+
+        await this.modify(callData.object as AdabasRecord, isn);
+        return isn;
+    }
+
+    private async exeDelete(callData: CallData): Promise<number> {
+        this.validateCallData(callData, ['criteria', 'isn']);
+        this.type = CallType.Delete;
+        this.map  = await this.getMap(callData);
+        await this.open(this.map.fnr);
+        if (callData.isn && typeof callData.isn === 'number') {
+            this.cb.init({ fnr: this.map.fnr, cmd: AdabasCommand.Delete, isn: callData.isn });
+            await this.callAdabas();
+            if (this.cb.rsp !== 0) throw new Error(this.getMessage(this.cb)); 
+            return callData.isn;
+        }       
+        return this.criteriaToIsn(callData.criteria);
+    }
+
+    private async exeClose(): Promise<boolean> {
+        this.cb.init({ cmd: AdabasCommand.Close });
+        await this.callAdabas();
+        if (this.cb.rsp !== 0) throw new Error(this.getMessage(this.cb));
+        this.status = Status.Close;
+        return true;
+    }
+
+    private async exeEndTransaction(): Promise<boolean> {
+        this.cb.init({ cmd: AdabasCommand.EndTrans });
+        await this.callAdabas();
+        if (this.cb.rsp !== 0) throw new Error(this.getMessage(this.cb));
+        return true;
+    }
+
+    private async exeBackoutTransaction(): Promise<boolean> {
+        this.cb.init({ cmd: AdabasCommand.BackoutTrans });
+        await this.callAdabas(); // FIX: was missing await — response check was meaningless before
+        if (this.cb.rsp !== 0) throw new Error(this.getMessage(this.cb));
+        return true;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Open session
+    // ---------------------------------------------------------------------------
+
+    private async open(fnr: number, mode = 'UPD'): Promise<void> {
+        if (this.status === Status.Open) return;
+
+        const cb = new ControlBlock();
+        cb.init({ cmd: AdabasCommand.Open });
+
+        const abda = new AdabasBufferStructure();
+        abda.add('F', Buffer.alloc(0));
+        abda.add('R', Buffer.from(`${mode}=${fnr}.`));
+
+        await this.callAdabas(abda, cb);
+
+        if (this.cb.rsp !== 0) throw new Error(this.getMessage(this.cb));
+        this.status = Status.Open;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Low-level Adabas call
+    // ---------------------------------------------------------------------------
+
+    private async callAdabas(
+        abda: AdabasBufferStructure = null,
+        cb: ControlBlock = this.cb,
+    ): Promise<PayloadData> {
         if (!this.connected) await this.connect();
-        const result = await this.adabas.call({ cb, 'abda': abda, 'uuid': this.uuid });
+        const result = await this.adabas.call({ cb, abda, uuid: this.uuid });
         this.cb = result.cb;
         return result;
     }
 
-    private async getAll(callData: CallData = {}) {
-        if (this.pageDone) return [];
-        if (callData.page && callData.page === 0) {
-            this.lastISN = 0;
-            return [];
-        }
-        let range: string[];
-        if (callData.isn) {
-            range = (callData.isn as string).split('-');
-        }
-        const abda = new AdabasBufferStructure();
-        if (callData.criteria) {
-            this.cb.init({
-                fnr: this.map.fnr,
-                cid: 'ANGS'
-            });
+    // ---------------------------------------------------------------------------
+    // Read helpers
+    // ---------------------------------------------------------------------------
 
-            const obj = await this.criteria(callData.criteria);
-            this.cb.cmd = 'S1';
-            const ib = Buffer.alloc(4); // for one ISN
-            // Note: for ADATCP the buffer order is important!
-            abda.newFb(Buffer.from(this.map.getFb()));
-            abda.newRb(Buffer.alloc(this.map.getRbLen()));
-            abda.newSb(obj.sb);
-            abda.newVb(obj.vb);
-            abda.newIb(ib);
+    private async getAll(callData: CursorCallData): Promise<AdabasRecord[]> {
+        const abda   = new AdabasBufferStructure();
+        const result: AdabasRecord[] = [];
+        let end      = false;
+        let lastISN  = callData._cursorISN ?? 0;
+
+        let range: string[] | undefined;
+        if (callData.isn && typeof callData.isn === 'string') {
+            range = callData.isn.split('-');
         }
-        else {
+
+        if (callData.criteria) {
+            this.cb.init({ fnr: this.map.fnr, cid: 'ANGS' });
+
+            const obj = this.criteriaToBuffers(callData.criteria);
+            this.cb.cmd = AdabasCommand.Search;
+
+            abda.add('F', Buffer.from(this.map.getFb()));
+            abda.add('R', Buffer.alloc(this.map.getRbLen()));
+            abda.add('S', obj.sb);
+            abda.add('V', obj.vb);
+            abda.add('I', Buffer.alloc(4));
+        } else {
             this.cb.init({
-                fnr: this.map.fnr,
-                cop1: 'M', // multifetch
+                fnr:  this.map.fnr,
+                cop1: 'M',
                 cop2: 'I',
-                // isl: this.multifetch,
-                cid: 'ANGA'
+                cid:  'ANGA',
             });
             if (callData.sortedBy) {
-                const item = this.map.list.find((item) => {
-                    return item.longName === callData.sortedBy;
-                });
-                if (item === undefined) {
-                    const message = '\'' + callData.sortedBy + '\' not found in Datamap.';
-                    throw new Error(message);
-                }
-                this.cb.cmd = 'L3';
+                const item = this.map.list.find(i => i.longName === callData.sortedBy);
+                if (!item) throw new Error(`'${callData.sortedBy}' not found in Datamap.`);
+                this.cb.cmd  = AdabasCommand.ReadSorted;
                 this.cb.add1 = item.shortName;
                 this.cb.cop2 = 'A';
-                this.cb.cid = 'RELO';
+                this.cb.cid  = 'RELO';
+            } else {
+                this.cb.cmd = AdabasCommand.ReadISN;
+                if (range) this.cb.isn = parseInt(range[0], 10);
             }
-            else {
-                this.cb.cmd = 'L1';
-                if (callData.isn) {
-                    this.cb.isn = parseInt(range[0]);
-                }
-            }
-            abda.newFb(Buffer.from(this.map.getFb()));
-            abda.newRb(Buffer.alloc(this.map.getRbLen() * this.multifetch));
-            abda.newMb(Buffer.alloc(this.multifetch * 16 + 4));
+
+            const rbLen = this.map.getRbLen();
+            abda.add('F', Buffer.from(this.map.getFb()));
+            abda.add('R', Buffer.alloc(rbLen * this.multifetch));
+            abda.add('M', Buffer.alloc(this.multifetch * MULTIFETCH_ENTRY_SIZE + MULTIFETCH_HEADER_SIZE));
         }
 
-        if (this.lastISN > 0) {
-            this.cb.isn = this.lastISN + 1;
-        }
-        const result: any[] = [];
-        let end = false;
+        if (lastISN > 0) this.cb.isn = lastISN + 1;
+
         do {
-            // this.initCb(this.map.fnr);
             const res = await this.callAdabas(abda);
             if (this.cb.rsp === 0) {
                 const rb = res.abda.getBuffer('R');
                 if (callData.criteria) {
-                    const object = this.createObject(this.cb.isn, rb);
-                    result.push(object);
+                    result.push(this.createObject(this.cb.isn, rb));
                     this.cb.isn++;
-                    if (this.cb.isq === 1) {
-                        break;
-                    }
-                }
-                else {
-                    let mb = res.abda.getBuffer('M');
-                    const missing = this.multifetch * 16 + 4 - mb.length;
-                    if (missing > 0) mb = Buffer.concat([mb, Buffer.alloc(missing)]);
-                    const multi = getFields(mb);
-                    let isn = 0;
-                    let offset = 0;
+                    if (this.cb.isq === 1) break;
+                } else {
+                    const mbRaw    = res.abda.getBuffer('M');
+                    const mbPadded = this.padBuffer(mbRaw, this.multifetch * MULTIFETCH_ENTRY_SIZE + MULTIFETCH_HEADER_SIZE);
+                    const multi    = getFields(mbPadded);
+                    let offset     = 0;
 
-                    for (let index = 0; index < multi.num; index++) {
-                        if (multi.mbe[index].error === 0) {
-                            isn = multi.mbe[index].isn;
-                            if (callData.isn && (isn > parseInt(range[1]))) {
-                                end = true;
-                                break;
-                            }
-                            const r = Buffer.alloc(multi.mbe[index].len);
-                            rb.copy(r, 0, offset, offset + multi.mbe[index].len);
-                            const object = this.createObject(isn, r);
-                            offset += multi.mbe[index].len;
-                            result.push(object);
+                    for (let i = 0; i < multi.num; i++) {
+                        const mbe = multi.mbe[i];
+                        if (mbe.error === 0) {
+                            const isn = mbe.isn;
+                            if (range && isn > parseInt(range[1], 10)) { end = true; break; }
+
+                            const r = Buffer.alloc(mbe.len);
+                            rb.copy(r, 0, offset, offset + mbe.len);
+                            result.push(this.createObject(isn, r));
+                            offset += mbe.len;
+                            lastISN = isn;
+
                             if (callData.page && result.length >= callData.page) {
                                 end = true;
-                                this.lastISN = isn;
                                 break;
                             }
                         }
-                        else {
-                            if (callData.page) {
-                                this.pageDone = true;
-                                this.lastISN = 0; // no more data
-                            }
-                        }
                     }
+
                     if (multi.num < this.multifetch) end = true;
-                    this.cb.isn = isn + 1;
+                    this.cb.isn = lastISN + 1;
                 }
             }
+
             if (callData.criteria) {
-                this.cb.cmd = 'L1';
-                this.cb.cop2 = 'N'; // get next
+                this.cb.cmd  = AdabasCommand.ReadISN;
+                this.cb.cop2 = 'N';
             }
-        }
-        while (this.cb.rsp === 0 && !end);
-        if (this.cb.rsp === 0 || this.cb.rsp === 3) {
-            return result;
-        } else {
-            throw new Error(this.getMessage(this.cb));
-        }
+        } while (this.cb.rsp === 0 && !end);
+
+        if (this.cb.rsp === 0 || this.cb.rsp === 3) return result;
+        throw new Error(this.getMessage(this.cb));
     }
 
-    private async get(isn: number) {
+    private async get(isn: number): Promise<AdabasRecord | number> {
         if (this.type === CallType.Read) {
-            this.cb.init({
-                fnr: this.map.fnr,
-                cmd: 'L1',
-                isn,
-                cop2: 'I'
-            });
-            const fb = Buffer.from(this.map.getFb());
-            const rb = Buffer.alloc(this.map.getRbLen());
+            this.cb.init({ fnr: this.map.fnr, cmd: AdabasCommand.ReadISN, isn, cop2: 'I' });
             const abda = new AdabasBufferStructure();
-            abda.newFb(fb);
-            abda.newRb(rb);
+            abda.add('F', Buffer.from(this.map.getFb()));
+            abda.add('R', Buffer.alloc(this.map.getRbLen()));
             const res = await this.callAdabas(abda);
-            if (this.cb.rsp === 0) {
-                const rb = res.abda.getBuffer('R');
-                const obj = this.createObject(this.cb.isn, rb);
-                return obj;
-            }
-            else {
-                throw new Error(this.getMessage(this.cb));
-            }
+            if (this.cb.rsp !== 0) throw new Error(this.getMessage(this.cb));
+            return this.createObject(this.cb.isn, res.abda.getBuffer('R'));
         }
+
         if (this.type === CallType.Delete) {
-            this.cb.init({
-                fnr: this.map.fnr,
-                cmd: 'E1',
-                isn
-            });
+            this.cb.init({ fnr: this.map.fnr, cmd: AdabasCommand.Delete, isn });
             await this.callAdabas();
-            if (this.cb.rsp != 0) {
-                throw new Error(this.getMessage(this.cb));
-            }
+            if (this.cb.rsp !== 0) throw new Error(this.getMessage(this.cb));
             return isn;
         }
+
         throw new Error('Call type not supported');
     }
 
-    private async modify(obj: any, isn?: number) {
+    // ---------------------------------------------------------------------------
+    // Write helpers
+    // ---------------------------------------------------------------------------
+
+    private async modify(obj: AdabasRecord, isn?: number): Promise<number> {
         this.map.validate(obj);
-        this.open(this.map.fnr);
-        // create new map containing only fields from the request
+        await this.open(this.map.fnr);
+
+        // Build a map containing only the fields present in the request object
         const updateMap = new AdabasMap();
-        Object.keys(obj).forEach((key) => {
-            const item = this.map.list.find((item) => {
-                return item.longName === key;
-            });
+        for (const key of Object.keys(obj)) {
+            const item = this.map.list.find(i => i.longName === key);
             if (item) {
-                if (item.type === 'periodic') {
-                    item.occ = obj[key].length;
-                }
+                if (item.type === 'periodic') item.occ = (obj[key] as unknown[]).length;
                 updateMap.add(item);
             }
-        });
+        }
+
         const buf = updateMap.getRb(obj);
+
         if (this.type === CallType.Update) {
-            // set record in hold
-            this.cb.init({
-                fnr: this.map.fnr,
-                cmd: 'HI',
-                isn
-            });
+            // Hold record
+            this.cb.init({ fnr: this.map.fnr, cmd: AdabasCommand.Hold, isn });
             await this.callAdabas();
-            if (this.cb.rsp != 0) {
-                const message = this.getMessage(this.cb);
-                this.close();
-                throw new Error(message);
+            if (this.cb.rsp !== 0) {
+                const msg = this.getMessage(this.cb);
+                await this.exeClose();
+                throw new Error(msg);
             }
-            // update record
-            this.cb.init({
-                fnr: this.map.fnr,
-                cmd: 'A1',
-                isn,
-                cop2: 'I'
-            });
+
+            // Update record
+            this.cb.init({ fnr: this.map.fnr, cmd: AdabasCommand.Update, isn, cop2: 'I' });
             const abda = new AdabasBufferStructure();
-            abda.newFb(Buffer.from(updateMap.getFb(false)));
-            abda.newRb(Buffer.from(buf as Buffer));
+            abda.add('F', Buffer.from(updateMap.getFb(false)));
+            abda.add('R', Buffer.from(buf as Buffer));
             await this.callAdabas(abda);
-            if (this.cb.rsp != 0) {
-                const message = this.getMessage(this.cb);
-                this.close();
-                throw new Error(message);
+            if (this.cb.rsp !== 0) {
+                const msg = this.getMessage(this.cb);
+                await this.exeClose();
+                throw new Error(msg);
             }
         }
+
         if (this.type === CallType.Create) {
-            // insert record
-            this.cb.init({
-                fnr: this.map.fnr,
-                cop2: 'I'
-            });
-            const fb = Buffer.from(updateMap.getFb(false));
+            this.cb.init({ fnr: this.map.fnr, cop2: 'I' });
             if (isn && isn > 0) {
-                this.cb.cmd = 'N2';
+                this.cb.cmd = AdabasCommand.StoreISN;
                 this.cb.isn = isn;
             } else {
-                this.cb.cmd = 'N1';
+                this.cb.cmd = AdabasCommand.Store;
             }
             const abda = new AdabasBufferStructure();
-            abda.newFb(fb);
-            abda.newRb(buf as Buffer);
-
+            abda.add('F', Buffer.from(updateMap.getFb(false)));
+            abda.add('R', buf as Buffer);
             await this.callAdabas(abda);
-            // console.log('----------------------->', this.cb.rsp);
-            // console.log(hexdump(Buffer.from(this.cb.add2), 'add2'));
-            // console.log(hexdump(buf as Buffer, 'rb'));
-            if (this.cb.rsp != 0) {
-                const message = this.getMessage(this.cb);
-                this.close();
-                throw new Error(message);
+            logger.debug({ rsp: this.cb.rsp }, 'Create response code');
+            logger.debug(hexdump(Buffer.from(this.cb.add2), 'add2'));
+            logger.debug(hexdump(buf as Buffer, 'rb'));
+            if (this.cb.rsp !== 0) {
+                const msg = this.getMessage(this.cb);
+                await this.exeClose();
+                throw new Error(msg);
             }
         }
-        return (this.cb.isn);
-    }
 
-    private createObject(isn: number, rb: Buffer): object {
-        return this.map.getObject(rb, true, isn);
-    }
-
-    private async criteria(criteria: string): Promise<any> {
-        const search = criteria.split('=');
-        // this.search = true;
-        if (search.length != 2) {
-            const message = 'Invalid search criteria.';
-            throw new Error(message);
-        }
-        try {
-            const item = this.map.getField(search[0]);
-            // const item = this.map.list.find((item) => {
-            //     return item.longName === search[0];
-            // });
-            if (item === undefined) {
-                const message = 'Longname ' + search[0] + ' not found in Datamap.';
-                throw new Error(message);
-            }
-            const sb = Buffer.from(item.shortName + ',' + search[1].length + '.');
-            const vb = Buffer.from(search[1]);
-            let isn;
-            switch (this.type) {
-                case CallType.Update: // update
-                    isn = await this.getIsnFromCriteria(sb, vb);
-                    // if (isn > 0) {
-                    //     this.isn(isn);
-                    // }
-                    return isn;
-                case CallType.Read: // read
-                    // sb = Buffer.from(item.shortName + ',' + search[1].length + ',S,' + item.shortName + ',' + search[1].length + '.');
-                    return { sb, vb }
-                case CallType.Delete: // delete
-                    isn = await this.getIsnFromCriteria(sb, vb);
-                    if (isn > 0) {
-                        this.cb.init({
-                            fnr: this.map.fnr,
-                            cmd: 'E1',
-                            isn
-                        });
-                        await this.callAdabas();
-                        if (this.cb.rsp != 0) {
-                            throw new Error(this.getMessage(this.cb));
-                        }
-                        return isn;
-                    }
-                    break;
-                default:
-                    throw new Error('Unknow type: ' + this.type);
-            }
-        } catch (error) {
-            throw new Error(error);
-        }
-    }
-
-    private async getIsnFromCriteria(sb: Buffer, vb: Buffer): Promise<number> {
-        // const isn = [];
-        this.cb.init({
-            fnr: this.map.fnr,
-            cmd: 'S1',
-            cid: 'ADJS',
-            cop2: 'I',
-            isq: 2
-        });
-        // buffers 
-        // Note: for ADATCP the buffer order is important!
-        const abda = new AdabasBufferStructure();
-        abda.newFb(Buffer.alloc(0));
-        abda.newRb(Buffer.alloc(0));
-        abda.newSb(sb);
-        abda.newVb(vb);
-        abda.newIb(Buffer.alloc(8));
-
-        await this.callAdabas(abda);
-        if (this.cb.rsp === 0) {
-            if (this.cb.isq === 0) {
-                const message = 'No record with this criteria found.';
-                throw new Error(message);
-            } else {
-                if (this.cb.isq > 1) {
-                    const message = this.cb.isq + ' records with this criteria found.';
-                    throw new Error(message);
-                }
-            }
-        }
-        else {
-            throw new Error(this.getMessage(this.cb));
-        }
         return this.cb.isn;
     }
 
+    // ---------------------------------------------------------------------------
+    // Search / criteria
+    // ---------------------------------------------------------------------------
 
-    private getMessage(cbx: any) {
-        return this.message.getMessage(cbx).message + ' ' + this.message.getMessage(cbx).explanation;
+    /**
+     * Parses a "field=value" criteria string into Adabas search buffers.
+     * Used by the Read path.
+     */
+    private criteriaToBuffers(criteria: string): SearchBuffers {
+        const [fieldName, fieldValue] = this.parseCriteria(criteria);
+        const item = this.map.getField(fieldName);
+        if (!item) throw new Error(`Field '${fieldName}' not found in Datamap.`);
+        return {
+            sb: Buffer.from(`${item.shortName},${fieldValue.length}.`),
+            vb: Buffer.from(fieldValue),
+        };
+    }
+
+    /**
+     * Parses a "field=value" criteria string and resolves it to an ISN.
+     * Used by the Update and Delete paths.
+     * For Delete, also issues the E1 command to remove the record.
+     */
+    private async criteriaToIsn(criteria: string): Promise<number> {
+        const [fieldName, fieldValue] = this.parseCriteria(criteria);
+        const item = this.map.getField(fieldName);
+        if (!item) throw new Error(`Field '${fieldName}' not found in Datamap.`);
+
+        const sb = Buffer.from(`${item.shortName},${fieldValue.length}.`);
+        const vb = Buffer.from(fieldValue);
+        const isn = await this.getIsnFromCriteria(sb, vb);
+
+        if (this.type === CallType.Delete && isn > 0) {
+            this.cb.init({ fnr: this.map.fnr, cmd: AdabasCommand.Delete, isn });
+            await this.callAdabas();
+            if (this.cb.rsp !== 0) throw new Error(this.getMessage(this.cb));
+        }
+
+        return isn;
+    }
+
+    /**
+     * Splits and validates a "field=value" criteria string.
+     * Returns a [fieldName, fieldValue] tuple.
+     */
+    private parseCriteria(criteria: string): [string, string] {
+        const parts = criteria.split('=');
+        if (parts.length !== 2) throw new Error('Invalid search criteria.');
+        return [parts[0], parts[1]];
+    }
+
+    private async getIsnFromCriteria(sb: Buffer, vb: Buffer): Promise<number> {
+        this.cb.init({
+            fnr:  this.map.fnr,
+            cmd:  AdabasCommand.Search,
+            cid:  'ADJS',
+            cop2: 'I',
+            isq:  2,
+        });
+
+        const abda = new AdabasBufferStructure();
+        abda.add('F', Buffer.alloc(0));
+        abda.add('R', Buffer.alloc(0));
+        abda.add('S', sb);
+        abda.add('V', vb);
+        abda.add('I',   Buffer.alloc(8));
+
+        await this.callAdabas(abda);
+
+        if (this.cb.rsp !== 0) throw new Error(this.getMessage(this.cb));
+        if (this.cb.isq === 0) throw new Error('No record with this criteria found.');
+        if (this.cb.isq > 1)   throw new Error(`${this.cb.isq} records with this criteria found.`);
+
+        return this.cb.isn;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Helpers
+    // ---------------------------------------------------------------------------
+
+    private createObject(isn: number, rb: Buffer): AdabasRecord {
+        return this.map.getObject(rb, true, isn) as AdabasRecord;
+    }
+
+    private getMessage(cbx: ControlBlock): string {
+        const info = this.message.getMessage(cbx);
+        return `${info.message} ${info.explanation}`;
     }
 
     private async getMap(callData: CallData): Promise<AdabasMap> {
-        const map = callData.map || await new FileDescriptionTable(this.host, this.port).getMap(callData.fnr);
-        if (!map) throw new Error('Neither map or file number provided');
-        if (callData.fields) {
-            const filteredMap = new AdabasMap(map.fnr);
-            callData.fields.forEach((field) => {
-                const item = map.getField(field);
-                if (item) {
-                    filteredMap.add(item);
-                }
-            });
-            return filteredMap;
+        const map = callData.map
+            ?? await new FileDescriptionTable(this.host, this.port, this.log).getMap(callData.fnr);
+
+        if (!map) throw new Error('Neither a map nor a file number was provided.');
+
+        if (!callData.fields) return map;
+
+        const filteredMap = new AdabasMap(map.fnr);
+        for (const field of callData.fields) {
+            const item = map.getField(field);
+            if (item) filteredMap.add(item);
         }
-        else
-            return map;
+        return filteredMap;
+    }
+
+    /**
+     * Centralised input validation — throws with a clear message for each missing field.
+     */
+    private validateCallData(callData: CallData, required: (keyof CallData)[]): void {
+        // If a single field is required, enforce it strictly.
+        if (required.length === 1) {
+            const field = required[0];
+            if (callData[field] === undefined || callData[field] === null) {
+                throw new Error(`'${field}' is required but was not provided.`);
+            }
+            return;
+        }
+
+        // If multiple fields are supplied, treat them as "at least one must be provided".
+        for (const field of required) {
+            if (callData[field] !== undefined && callData[field] !== null) {
+                return;
+            }
+        }
+
+        throw new Error(`One of [${required.join(', ')}] is required but none were provided.`);
+    }
+
+    /**
+     * Pads a buffer to a target length with zeroes if it is shorter.
+     */
+    private padBuffer(buf: Buffer, targetLength: number): Buffer {
+        const missing = targetLength - buf.length;
+        return missing > 0 ? Buffer.concat([buf, Buffer.alloc(missing)]) : buf;
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright © 2019-2022 Software AG, Darmstadt, Germany and/or its licensors
+ * Copyright © 2019-2026 Software GmbH, Darmstadt, Germany and/or its licensors
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -19,81 +19,175 @@
 
 import { Socket } from 'net';
 import { QueueElement } from './interfaces';
+import logger from './logger';
 
+// ---------------------------------------------------------------------------
+// Module-level global handler — attached once, not per instance
+// ---------------------------------------------------------------------------
 
-const HOST = 'localhost';
-const PORT = 49152;
+process.on('warning', e => logger.warn(e.stack));
+
+// ---------------------------------------------------------------------------
+// Defaults
+// ---------------------------------------------------------------------------
+
+const DEFAULT_HOST    = 'localhost';
+const DEFAULT_PORT    = 49152;
+const DEFAULT_TIMEOUT = 15000;
+
+/** Byte offset in the ADATCP header that holds the total packet length. */
+const HEADER_TOTAL_LEN_OFFSET = 8;
+
+// ---------------------------------------------------------------------------
+// AdabasTcp
+// ---------------------------------------------------------------------------
 
 export class AdabasTcp {
-    private socket: Socket;
-    private queue: QueueElement[] = [];
-    private length = 0;
-    private totalLength = -1;
-    private buffer: Buffer;
- 
-    constructor(host: string, port: number) {
+    private readonly socket: Socket;
+    private readonly queue: QueueElement[] = [];
+
+    /** Bytes received so far for the current fragmented response. */
+    private bytesReceived = 0;
+
+    /** Expected total length of the current fragmented response; null when idle. */
+    private expectedLength: number | null = null;
+
+    /** Accumulation buffer for fragmented responses. */
+    private fragmentBuffer: Buffer = Buffer.alloc(0);
+
+    constructor(host = DEFAULT_HOST, port = DEFAULT_PORT) {
         this.socket = new Socket();
-        host = host || HOST;
-        port = port || PORT;
-        this.socket.connect(port, host, () => {
-            // console.log(`Client connected to: ${host} : ${port}`);
-        });
-        this.socket.on('close', () => {
-            // console.log('Client closed');
+
+        // Attach all handlers before connect so connection errors are caught
+        this.socket.on('connect', () => {
+            logger.debug({ host, port }, 'Client connected to');
         });
 
-        this.socket.on('data', (data) => {
-            if (this.length < this.totalLength) {
-                this.length += data.length;
-                this.buffer = Buffer.concat([this.buffer, data]);
-                if (this.length >= this.totalLength) {
-                    this.resolveData(this.buffer);
-                    this.totalLength = -1;
-                }
-            }
-            else {
-                if (data.length < data.readUInt32BE(8)) { // current buffer length is smaller than total buffer length from ADATCP header
-                    this.length = data.length;
-                    this.totalLength = data.readUInt32BE(8);
-                    this.buffer = Buffer.from(data);
-                }
-                else {
-                    this.resolveData(data);
-                }
-            }
+        this.socket.on('close', (hadError: boolean) => {
+            logger.debug({ hadError }, 'Client closed');
         });
 
-        this.socket.on('error', (err) => {
+        this.socket.on('end', () => {
+            logger.debug('Remote end of socket signaled');
             if (this.queue.length > 0) {
-                this.queue[0].reject(err);
-            }
-            else {
-                console.log(err);
+                this.rejectAll(new Error('Connection ended by server'));
             }
         });
 
-        process.on('warning', e => console.warn(e.stack));
+        this.socket.on('timeout', () => {
+            logger.debug('Socket timeout');
+            const err = AdabasTcp.makeError('Socket timeout', 'ETIMEDOUT');
+            this.rejectAll(err);
+            this.socket.destroy(err);
+        });
+
+        this.socket.on('data', (data: Buffer) => {
+            this.onData(data);
+        });
+
+        this.socket.on('error', (err: NodeJS.ErrnoException) => {
+            // Typical codes: ECONNREFUSED, EHOSTUNREACH, ENETUNREACH, ECONNRESET
+            logger.debug({ code: err.code, err }, 'Socket error');
+            this.rejectAll(err);
+        });
+
+        this.socket.setTimeout(DEFAULT_TIMEOUT);
+        this.socket.connect(port, host);
     }
 
-    resolveData(data: Buffer): void {
-        const element = this.queue.shift();
-        element.resolve(data);
-        if (this.queue.length > 0) { // more call in queue
-            this.socket.write(this.queue[0].data);
-        }
-    }
+    // -----------------------------------------------------------------------
+    // Public API
+    // -----------------------------------------------------------------------
 
     send(data: Buffer): Promise<Buffer> {
-        return new Promise((resolve, reject) => {
+        return new Promise<Buffer>((resolve, reject) => {
             this.queue.push({ data, resolve, reject });
+
+            if (this.socket.destroyed) {
+                // Socket is gone — reject all pending requests including this one
+                this.rejectAll(AdabasTcp.makeError('Socket is destroyed', 'EDESTROYED'));
+                return;
+            }
+
             if (this.queue.length === 1) {
-                this.socket.write(data);
+                try {
+                    this.socket.write(data);
+                } catch (err) {
+                    logger.error({ err }, 'Socket write error');
+                    reject(err instanceof Error ? err : new Error(String(err)));
+                }
             }
         });
     }
 
     close(): void {
-        // console.log('destroy socket')
+        logger.debug('destroy socket');
         this.socket.destroy();
+    }
+
+    // -----------------------------------------------------------------------
+    // Private — data handling
+    // -----------------------------------------------------------------------
+
+    private onData(data: Buffer): void {
+        if (this.expectedLength !== null) {
+            // Continuation of a fragmented response
+            this.fragmentBuffer  = Buffer.concat([this.fragmentBuffer, data]);
+            this.bytesReceived  += data.length;
+
+            if (this.bytesReceived >= this.expectedLength) {
+                const complete = this.fragmentBuffer;
+                this.resetFragmentState();
+                this.resolveData(complete);
+            }
+            return;
+        }
+
+        const totalLength = data.readUInt32BE(HEADER_TOTAL_LEN_OFFSET);
+
+        if (data.length < totalLength) {
+            // First chunk of a fragmented response — begin accumulation
+            this.expectedLength  = totalLength;
+            this.bytesReceived   = data.length;
+            this.fragmentBuffer  = Buffer.from(data);
+        } else {
+            // Complete response arrived in a single packet
+            this.resolveData(data);
+        }
+    }
+
+    private resolveData(data: Buffer): void {
+        const element = this.queue.shift();
+        element?.resolve(data);
+
+        if (this.queue.length > 0) {
+            try {
+                this.socket.write(this.queue[0].data);
+            } catch (err) {
+                this.rejectAll(err instanceof Error ? err : new Error(String(err)));
+            }
+        }
+    }
+
+    private rejectAll(err: Error): void {
+        while (this.queue.length > 0) {
+            this.queue.shift()?.reject(err);
+        }
+    }
+
+    private resetFragmentState(): void {
+        this.expectedLength  = null;
+        this.bytesReceived   = 0;
+        this.fragmentBuffer  = Buffer.alloc(0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Private — utilities
+    // -----------------------------------------------------------------------
+
+    private static makeError(message: string, code: string): NodeJS.ErrnoException {
+        const err: NodeJS.ErrnoException = new Error(message);
+        err.code = code;
+        return err;
     }
 }

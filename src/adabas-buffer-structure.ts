@@ -1,5 +1,5 @@
 /*
- * Copyright © 2019-2020 Software AG, Darmstadt, Germany and/or its licensors
+ * Copyright © 2019-2026 Software GmbH, Darmstadt, Germany and/or its licensors
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -18,58 +18,34 @@
  */
 
 import { AdabasBuffer } from './adabas-buffer';
+import logger from './logger';
+
+export type BufferId = 'R' | 'F' | 'I' | 'V' | 'S' | 'M';
 
 export class AdabasBufferStructure {
-    private data: AdabasBuffer[];
 
-    constructor() {
-        this.data = [];
-    }
-
-    newRb(buffer: Buffer): void {
-        this.newAbd(AdabasBuffer.newRb(buffer));
-    }
-
-    newFb(buffer: Buffer): void {
-        this.newAbd(AdabasBuffer.newFb(buffer));
-    }
-
-    newIb(buffer: Buffer): void {
-        this.newAbd(AdabasBuffer.newIb(buffer));
-    }
-
-    newVb(buffer: Buffer): void {
-        this.newAbd(AdabasBuffer.newVb(buffer));
-    }
-
-    newSb(buffer: Buffer): void {
-        this.newAbd(AdabasBuffer.newSb(buffer));
-    }
-
-    newMb(buffer: Buffer): void {
-        this.newAbd(AdabasBuffer.newMb(buffer));
-    }
+    private data: AdabasBuffer[] = [];
 
     newAbd(abd: AdabasBuffer): void {
         this.data.push(abd);
     }
 
-    get(): AdabasBuffer[] {
-        return this.data;
+
+    add(id: BufferId, buffer: Buffer): void {
+        this.newAbd(new AdabasBuffer(id, buffer));
     }
 
-    getBuffer(type: string): Buffer | null {
-        for (let i = 0; i < this.data.length; i++) {
-            if (this.data[i].abd.id == type) {
-                return this.data[i].buffer;
-            }
+    getBuffers(): AdabasBuffer[] {
+        return [...this.data];
+    }
+
+    getBuffer(type: BufferId): Buffer | null {
+        return this.data.find(e => e.abd.id === type)?.buffer ?? null;
+    }
+
+    dump(): void {
+        for (const e of this.data) {
+            logger.debug({ id: e.abd.id, len: e.buffer.length }, 'AdabasBuffer');
         }
-        return null;
-    }
-
-    dump() {
-        this.data.forEach( (e) => {
-            console.log(e.abd.id, e.buffer.length);
-        })
     }
 }
