@@ -21,6 +21,7 @@ import Joi = require('joi');
 import { Int64LE } from 'int64-buffer';
 import { AdabasRecord, MapData, MapOption } from './interfaces';
 import logger from './logger';
+import { getNumberFromDate } from './common';
 
 // ---------------------------------------------------------------------------
 // Field-value types
@@ -35,18 +36,18 @@ type ScalarFieldValue = string | number | Buffer | Date;
 // Field-format constants
 // ---------------------------------------------------------------------------
 
-const TYPE_REGULAR  = 'regular';
+const TYPE_REGULAR = 'regular';
 const TYPE_MULTIPLE = 'multiple';
 const TYPE_PERIODIC = 'periodic';
-const TYPE_GROUP    = 'group';
+const TYPE_GROUP = 'group';
 
-const FIELD_FORMAT_ALPHA    = 'alpha';
-const FIELD_FORMAT_BINARY   = 'binary';
-const FIELD_FORMAT_FIXED    = 'fixed';
-const FIELD_FORMAT_FLOAT    = 'float';
-const FIELD_FORMAT_PACKED   = 'packed';
+const FIELD_FORMAT_ALPHA = 'alpha';
+const FIELD_FORMAT_BINARY = 'binary';
+const FIELD_FORMAT_FIXED = 'fixed';
+const FIELD_FORMAT_FLOAT = 'float';
+const FIELD_FORMAT_PACKED = 'packed';
 const FIELD_FORMAT_UNPACKED = 'unpacked';
-const FIELD_FORMAT_WIDE     = 'wide';
+const FIELD_FORMAT_WIDE = 'wide';
 
 // ---------------------------------------------------------------------------
 // AdabasMap
@@ -59,8 +60,8 @@ export class AdabasMap {
     private schema: Joi.ObjectSchema;
 
     constructor(fnr = 0) {
-        this._fnr   = fnr;
-        this._list  = [];
+        this._fnr = fnr;
+        this._list = [];
         this.schema = Joi.object();
     }
 
@@ -89,12 +90,12 @@ export class AdabasMap {
     // -----------------------------------------------------------------------
 
     field(shortName: string, length: number, format: string, validate: Joi.Schema, options?: MapOption): AdabasMap {
-        const opt      = options ?? { occ: 0, name: shortName };
-        const occ      = opt.occ ?? 0;
+        const opt = options ?? { occ: 0, name: shortName };
+        const occ = opt.occ ?? 0;
         const longName = opt.name ?? shortName;
 
         if (shortName.length !== 2) throw new Error('Only two bytes allowed for Short Name.');
-        if (occ < 0)                throw new Error('Occurrence must not be negative.');
+        if (occ < 0) throw new Error('Occurrence must not be negative.');
 
         const object: MapData = { type: TYPE_REGULAR, shortName, longName, format, length, options };
 
@@ -103,7 +104,7 @@ export class AdabasMap {
             this.appendSchema(longName, validate);
         } else {
             object.type = TYPE_MULTIPLE;
-            object.occ  = occ;
+            object.occ = occ;
             this._list.push(object);
             this.appendSchema(longName, Joi.array().max(occ));
         }
@@ -147,7 +148,7 @@ export class AdabasMap {
     }
 
     group(map: AdabasMap, shortName: string, options?: MapOption): AdabasMap {
-        const occ      = options?.occ ?? 0;
+        const occ = options?.occ ?? 0;
         const longName = options?.name ?? shortName;
 
         if (occ < 0) throw new Error('Occurrence must not be negative.');
@@ -227,7 +228,7 @@ export class AdabasMap {
 
     getRb(object: AdabasRecord, counter = false): Buffer {
         this.setOffset(counter);
-        const cnt    = counter ? 1 : 0;
+        const cnt = counter ? 1 : 0;
         const buffer = this.initBuffer(this.getRbLen(cnt));
 
         for (const key of Object.keys(object)) {
@@ -288,10 +289,10 @@ export class AdabasMap {
                 if (mapData.occ) {
                     // Periodic group
                     let offset = mapData.offset;
-                    let count  = mapData.occ;
+                    let count = mapData.occ;
 
                     if (counter) {
-                        count  = Math.min(buffer.readInt8(offset), count);
+                        count = Math.min(buffer.readInt8(offset), count);
                         offset++;
                     }
 
@@ -336,7 +337,7 @@ export class AdabasMap {
                 }
             } else if (mapData.occ) {
                 // Multiple-value field
-                let index  = mapData.occ;
+                let index = mapData.occ;
                 let offset = mapData.offset;
 
                 if (counter) {
@@ -488,7 +489,7 @@ export class AdabasMap {
         switch (item.format) {
             case 'A': return ''.padEnd(item.length);
             case 'B': return Buffer.alloc(item.length);
-            default:  return 0;
+            default: return 0;
         }
     }
 
@@ -509,10 +510,16 @@ export class AdabasMap {
                 break;
 
             case 'P': { // packed
-                const packed = item.options?.prec
-                    ? (value as number) * Math.pow(10, item.options.prec)
-                    : (value as number);
-
+                let packed = 0;
+                // check type of value
+                if (value instanceof Date) {
+                    packed = getNumberFromDate(value, item.options?.format ?? '');
+                }
+                else {
+                    packed = item.options?.prec
+                        ? (value as number) * Math.pow(10, item.options.prec)
+                        : (value as number);
+                }
                 let v = packed < 0 ? -packed : packed;
                 const start = offset + item.length - 2;
 
@@ -534,9 +541,15 @@ export class AdabasMap {
             }
 
             case 'U': { // unpacked
-                const unpacked = item.options?.prec
+                let unpacked = 0;
+                if (value instanceof Date) {
+                    unpacked = getNumberFromDate(value, item.options?.format ?? '');
+                }
+                else {
+                    unpacked = item.options?.prec
                     ? (value as number) * Math.pow(10, item.options.prec)
                     : (value as number);
+                }
                 buffer.write(String(unpacked).padStart(item.length, '0'), offset, item.length);
                 break;
             }
@@ -573,7 +586,7 @@ export class AdabasMap {
         switch (mapData.format) {
             case 'A': // alpha
             case 'W': { // wide
-                const raw   = buffer.toString('utf8', offset, offset + mapData.length);
+                const raw = buffer.toString('utf8', offset, offset + mapData.length);
                 const nullAt = raw.indexOf('\0');
                 return nullAt === -1 ? raw.trim() : raw.slice(0, nullAt).trim();
             }
@@ -588,22 +601,22 @@ export class AdabasMap {
                 break;
 
             case 'P': { // packed
-                let base  = 1;
+                let base = 1;
                 let value = 0;
-                let sign  = 1;
+                let sign = 1;
 
                 for (let i = offset + mapData.length; i > offset; i--) {
                     const lo = buffer[i - 1] & 0x0f;
                     if (lo < 0xa) {
                         value += lo * base;
-                        base  *= 10;
+                        base *= 10;
                     } else {
                         if (lo === 0xb || lo === 0xd) sign = -1;
                         base = 1;
                     }
                     const hi = (buffer[i - 1] & 0xf0) >> 4;
                     value += hi * base;
-                    base  *= 10;
+                    base *= 10;
                 }
                 value *= sign;
 
@@ -674,7 +687,7 @@ export class AdabasMap {
             case 'P': return FIELD_FORMAT_PACKED;
             case 'U': return FIELD_FORMAT_UNPACKED;
             case 'W': return FIELD_FORMAT_WIDE;
-            default:  throw new Error(`Unknown field format '${code}'.`);
+            default: throw new Error(`Unknown field format '${code}'.`);
         }
     }
 

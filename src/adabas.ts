@@ -171,7 +171,7 @@ export class Adabas {
         return this.enqueue(() => this.exeCreate(callData));
     }
 
-    public read(callData: CallData = {}): Promise<number | AdabasRecord | AdabasRecord[]> {
+    public read(callData: CallData = {}): Promise<AdabasRecord[]> {
         return this.enqueue(() => this.exeRead(callData));
     }
 
@@ -269,13 +269,13 @@ export class Adabas {
         return this.modify(callData.object as AdabasRecord, callData.isn as number | undefined);
     }
 
-    private async exeRead(callData: CursorCallData): Promise<number | AdabasRecord | AdabasRecord[]> {
+    private async exeRead(callData: CursorCallData): Promise< AdabasRecord[]> {
         this.type = CallType.Read;
         this.map  = await this.getMap(callData);
         await this.open(this.map.fnr);
         if (callData.isn !== undefined) {
             if (typeof callData.isn === 'number') {
-                return this.get(callData.isn);
+                return [await this.get(callData.isn)];
             }
             if (typeof callData.isn === 'string') {
                 return this.getAll(callData);
@@ -473,25 +473,17 @@ export class Adabas {
         throw new Error(this.getMessage(this.cb));
     }
 
-    private async get(isn: number): Promise<AdabasRecord | number> {
-        if (this.type === CallType.Read) {
+    private async get(isn: number): Promise<AdabasRecord > {
             this.cb.init({ fnr: this.map.fnr, cmd: AdabasCommand.ReadISN, isn, cop2: 'I' });
             const abda = new AdabasBufferStructure();
             abda.add('F', Buffer.from(this.map.getFb()));
             abda.add('R', Buffer.alloc(this.map.getRbLen()));
             const res = await this.callAdabas(abda);
-            if (this.cb.rsp !== 0) throw new Error(this.getMessage(this.cb));
+            if (this.cb.rsp !== 0) {
+                if (this.cb.rsp === 3) throw new Error('Record not found.');
+                throw new Error(this.getMessage(this.cb));
+            }
             return this.createObject(this.cb.isn, res.abda.getBuffer('R'));
-        }
-
-        if (this.type === CallType.Delete) {
-            this.cb.init({ fnr: this.map.fnr, cmd: AdabasCommand.Delete, isn });
-            await this.callAdabas();
-            if (this.cb.rsp !== 0) throw new Error(this.getMessage(this.cb));
-            return isn;
-        }
-
-        throw new Error('Call type not supported');
     }
 
     // ---------------------------------------------------------------------------

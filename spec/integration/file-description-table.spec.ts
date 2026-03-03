@@ -17,7 +17,7 @@
  *
  */
 
-import * as config from 'config';
+import config from 'config';
 
 import { AdabasMap } from '../../src/adabas-map';
 import { FileDescriptionTable } from '../../src/file-description-table';

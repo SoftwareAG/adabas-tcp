@@ -26,20 +26,20 @@ export function expandBuffer(buffer: Buffer, len: number): Buffer {
 }
 
 function formatOffset(offset: number) {
-  let o = offset.toString(16);
-  for (let index = o.length; index < 4; index++) {
-      o = '0' + o;
-  }
-  return o;
+    let o = offset.toString(16);
+    for (let index = o.length; index < 4; index++) {
+        o = '0' + o;
+    }
+    return o;
 }
 
 function fillToLength(text: string, len: number, filler = ' ') {
-  if (text.length < len) {
-      for (let index = text.length; index < len; index++) {
-          text += filler;
-      }
-  }
-  return text;
+    if (text.length < len) {
+        for (let index = text.length; index < len; index++) {
+            text += filler;
+        }
+    }
+    return text;
 }
 
 export function hexdump(buffer: Buffer, text = 'Buffer'): string {
@@ -86,5 +86,20 @@ export function getFields(buffer: Buffer) {
 export function padBuffer(buf: Buffer, targetLength: number): Buffer {
     const missing = targetLength - buf.length;
     return missing > 0 ? Buffer.concat([buf, Buffer.alloc(missing)]) : buf;
+}
+
+export function getNumberFromDate(date: Date, format: string) {
+    let num = 0;
+    const groundZero = new Date('0000-01-01').getTime();
+    const time = date.getTime();
+    switch (format) {
+        case 'date':
+            num = Math.floor((time - groundZero) / (1000 * 60 * 60 * 24));
+            break;
+        case 'time':
+            num = time - groundZero;
+            break;
+    }
+    return num;
 }
 

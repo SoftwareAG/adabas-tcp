@@ -8,18 +8,11 @@ import pino from 'pino';
 const level = (process.env.LOG_LEVEL || process.env.DEBUG_LEVEL || 'info').toLowerCase();
 
 // ---------------------------------------------------------------------------
-// Base pino instance — pretty in dev, plain JSON in production
+// Base pino instance — outputs plain JSON; pipe through pino-pretty in CLI:
+//   node app.js | pino-pretty
 // ---------------------------------------------------------------------------
 
-const baseLogger = process.env.NODE_ENV !== 'production'
-    ? pino({
-        level,
-        transport: {
-            target:  'pino-pretty',
-            options: { colorize: true, translateTime: 'SYS:standard', ignore: 'pid,hostname' },
-        },
-    })
-    : pino({ level });
+const baseLogger = pino({ level });
 
 // ---------------------------------------------------------------------------
 // Types
