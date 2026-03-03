@@ -17,7 +17,7 @@
  *
  */
 
-import * as config from 'config';
+import config from 'config';
 
 import { Adabas } from '../../src/adabas';
 import { AdabasMap } from '../../src/adabas-map';
@@ -131,8 +131,8 @@ describe('Adabas Integration Tests', () => {
     describe('read by ISN', () => {
 
         test('ISN 207 returns correct employee record with multiple field', async () => {
-            const value = await adabas.read({ map: makeEmployeeMap(fileNumber), isn: 207 });
-            expect(value).toEqual({
+            const value = await adabas.read({ map: makeEmployeeMap(fileNumber), isn: 207 }) as AdabasRecord[];
+            expect(value).toEqual([{
                 ISN: 207,
                 'Personnel Id': '11100107',
                 'First Name':   'HELGA',
@@ -141,7 +141,7 @@ describe('Adabas Integration Tests', () => {
                 City:           'HEPPENHEIM',
                 Country:        'D',
                 Language:       ['GER', 'FRE'],
-            });
+            }]);
         });
 
         test('ISN 250 returns correct employee record with periodic group', async () => {
@@ -152,8 +152,8 @@ describe('Adabas Integration Tests', () => {
                 .alpha(3,  'AZ', { name: 'Language', occ: 5 })
                 .group(makeIncomeMap(), 'AQ', { name: 'Income', occ: 6 });
 
-            const value = await adabas.read({ map, isn: 250 });
-            expect(value).toEqual({
+            const value = await adabas.read({ map, isn: 250 }) as AdabasRecord[];
+            expect(value).toEqual([{
                 ISN: 250,
                 'Personnel Id': '11222222',
                 'First Name':   'ANTONIA',
@@ -164,12 +164,12 @@ describe('Adabas Integration Tests', () => {
                     { 'Currency Code': 'EUR', Salary: 22153, Bonus: [3589, 6000] },
                     { 'Currency Code': 'EUR', Salary: 20769, Bonus: [1538] },
                 ],
-            });
+            }]);
         });
 
         test('ISN 207 returns full raw record when read without map', async () => {
             const value = await adabas.read({ fnr: fileNumber, isn: 207 });
-            expect(value).toEqual({
+            expect(value).toEqual([{
                 ISN: 207,
                 AA: '11100107',
                 AB: { AC: 'HELGA', AE: 'SCHMIDT', AD: 'GERDA' },
@@ -196,7 +196,7 @@ describe('Adabas Integration Tests', () => {
                     { AX: 19981225, AY: 19981229 },
                 ],
                 AZ: ['GER', 'FRE'],
-            });
+            }]);
         });
 
         test('ISN 207 returns only requested fields when fields filter is provided', async () => {
@@ -205,7 +205,7 @@ describe('Adabas Integration Tests', () => {
                 fields: ['Name', 'City'],
                 isn: 207,
             });
-            expect(value).toEqual({ ISN: 207, City: 'HEPPENHEIM', Name: 'SCHMIDT' });
+            expect(value).toEqual([{ ISN: 207, City: 'HEPPENHEIM', Name: 'SCHMIDT' }]);
         });
 
         test('ISN 207 returns correctly parsed date field', async () => {
@@ -214,26 +214,26 @@ describe('Adabas Integration Tests', () => {
                 .alpha(20, 'AE', { name: 'Name' })
                 .packed(4, 'AH', { name: 'Birth', format: 'date' });
 
-            const value = await adabas.read({ map, isn: 207 }) as AdabasRecord;
-            expect((value.Birth as Date).toUTCString()).toBe('Thu, 25 May 1961 00:00:00 GMT');
+            const value = await adabas.read({ map, isn: 207 }) as AdabasRecord[];
+            expect((value[0].Birth as Date).toUTCString()).toBe('Thu, 25 May 1961 00:00:00 GMT');
         });
 
         test('ISN 97 returns only one MU occurrence when occ is 1', async () => {
             const map = new AdabasMap(fileNumber).alpha(3, 'AZ', { name: 'Language', occ: 1 });
-            const value = await adabas.read({ map, isn: 97 });
-            expect(value).toEqual({ ISN: 97, Language: ['FRE'] });
+            const value = await adabas.read({ map, isn: 97 }) as AdabasRecord[];
+            expect(value).toEqual([{ ISN: 97, Language: ['FRE'] }]);
         });
 
         test('ISN 97 returns all MU occurrences when occ is 5', async () => {
             const map = new AdabasMap(fileNumber).alpha(3, 'AZ', { name: 'Language', occ: 5 });
-            const value = await adabas.read({ map, isn: 97 });
-            expect(value).toEqual({ ISN: 97, Language: ['FRE', 'ENG'] });
+            const value = await adabas.read({ map, isn: 97 }) as AdabasRecord[];
+            expect(value).toEqual([{ ISN: 97, Language: ['FRE', 'ENG'] }]);
         });
 
         test('non-existent ISN 20000 rejects with response code 3', async () => {
             const map = makePersonnelIdMap(fileNumber);
             await expect(adabas.read({ map, isn: 20000 }))
-                .rejects.toThrow('Adabas response code 3 received.');
+                .rejects.toThrow('Record not found.');
         });
     });
 
@@ -307,23 +307,23 @@ describe('Adabas Integration Tests', () => {
             const map = new AdabasMap(fileNumber)
                 .group(makeIncomeMap(), 'AQ', { name: 'Income', occ: 3 });
 
-            const value = await adabas.read({ map, isn: 237 });
-            expect(value).toEqual({
+            const value = await adabas.read({ map, isn: 237 }) as AdabasRecord[];
+            expect(value).toEqual([{
                 ISN: 237,
                 Income: [
                     { 'Currency Code': 'EUR', Salary: 24358, Bonus: [1282] },
                     { 'Currency Code': 'EUR', Salary: 23076, Bonus: [1025] },
                     { 'Currency Code': 'EUR', Salary: 21538, Bonus: [] },
                 ],
-            });
+            }]);
         });
 
         test('ISN 237 returns all 5 occurrences when occ is 6', async () => {
             const map = new AdabasMap(fileNumber)
                 .group(makeIncomeMap(), 'AQ', { name: 'Income', occ: 6 });
 
-            const value = await adabas.read({ map, isn: 237 });
-            expect(value).toEqual({
+            const value = await adabas.read({ map, isn: 237 }) as AdabasRecord[];
+            expect(value).toEqual([{
                 ISN: 237,
                 Income: [
                     { 'Currency Code': 'EUR', Salary: 24358, Bonus: [1282] },
@@ -332,7 +332,7 @@ describe('Adabas Integration Tests', () => {
                     { 'Currency Code': 'EUR', Salary: 20512, Bonus: [] },
                     { 'Currency Code': 'EUR', Salary: 19743, Bonus: [] },
                 ],
-            });
+            }]);
         });
     });
 
@@ -348,8 +348,8 @@ describe('Adabas Integration Tests', () => {
                 .wide(40, 'BB')
                 .wide(50, 'BC');
 
-            const result = await adabas.read({ map, isn: 1259 });
-            expect(result).toEqual({ ISN: 1259, BA: 'संदीप', BB: 'देशमुख', BC: 'दिलीप' });
+            const result = await adabas.read({ map, isn: 1259 }) as AdabasRecord[];
+            expect(result).toEqual([{ ISN: 1259, BA: 'संदीप', BB: 'देशमुख', BC: 'दिलीप' }]);
         });
     });
 
@@ -426,9 +426,9 @@ describe('Adabas Integration Tests', () => {
             await adabas.endTransaction();
             expect(isn).toBeGreaterThan(0);
 
-            const obj = await adabas.read({ map, isn }) as AdabasRecord;
-            expect(obj.City).toBe(update.City);
-            expect(obj.Country).toBe(update.Country);
+            const obj = await adabas.read({ map, isn }) as AdabasRecord[];
+            expect(obj[0].City).toBe(update.City);
+            expect(obj[0].Country).toBe(update.Country);
         });
 
         test('4 — deletes Test1234 and returns a positive ISN', async () => {
