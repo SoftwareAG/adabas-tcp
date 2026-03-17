@@ -18,7 +18,7 @@
  */
 
 import { ControlBlock } from './control-block';
-import { CallType, CallData, PayloadData, AdabasOptions, CommandQueue, AdabasRecord, FdtResult } from './interfaces';
+import { CallType, CallData, TypedCallData, PayloadData, AdabasOptions, CommandQueue, AdabasRecord, FdtResult } from './interfaces';
 import { AdabasConnect } from './adabas-connect';
 import { AdabasTcp } from './adabas-tcp';
 import { AdabasBufferStructure } from './adabas-buffer-structure';
@@ -34,18 +34,18 @@ import { FileDescriptionTable } from './file-description-table';
 // ---------------------------------------------------------------------------
 
 const enum AdabasCommand {
-    ReadISN      = 'L1',
-    ReadSorted   = 'L3',
-    Search       = 'S1',
-    Store        = 'N1',
-    StoreISN     = 'N2',
-    Update       = 'A1',
-    Delete       = 'E1',
-    Hold         = 'HI',
-    EndTrans     = 'ET',
+    ReadISN = 'L1',
+    ReadSorted = 'L3',
+    Search = 'S1',
+    Store = 'N1',
+    StoreISN = 'N2',
+    Update = 'A1',
+    Delete = 'E1',
+    Hold = 'HI',
+    EndTrans = 'ET',
     BackoutTrans = 'BT',
-    Open         = 'OP',
-    Close        = 'CL',
+    Open = 'OP',
+    Close = 'CL',
 }
 
 const DEFAULT_MULTIFETCH = 10;
@@ -78,8 +78,8 @@ interface CursorCallData extends CallData {
 // ---------------------------------------------------------------------------
 
 /** Cursor returned by readCursor() for explicit pagination control. */
-export interface AdabasCursor {
-    next(): Promise<AdabasRecord[]>;
+export interface AdabasCursor<T extends AdabasRecord = AdabasRecord> {
+    next(): Promise<T[]>;
     hasMore(): boolean;
     reset(): void;
 }
@@ -120,9 +120,9 @@ export class Adabas {
 
         if (options) this.applyOptions(options);
 
-        this.cb      = new ControlBlock();
-        this.client  = new AdabasTcp(host, port);
-        this.adabas  = new AdabasCall(this.client, this.log);
+        this.cb = new ControlBlock();
+        this.client = new AdabasTcp(host, port);
+        this.adabas = new AdabasCall(this.client, this.log);
         this.message = new AdabasMessage();
     }
 
@@ -132,7 +132,7 @@ export class Adabas {
 
     private applyOptions(options: AdabasOptions): void {
         this.multifetch = options.multifetch ?? DEFAULT_MULTIFETCH;
-        this.log        = options.log ?? null;
+        this.log = options.log ?? null;
     }
 
     // ---------------------------------------------------------------------------
@@ -140,7 +140,7 @@ export class Adabas {
     // ---------------------------------------------------------------------------
 
     async connect(): Promise<Buffer> {
-        this.uuid      = await new AdabasConnect(this.client).connect();
+        this.uuid = await new AdabasConnect(this.client).connect();
         this.connected = true;
         return this.uuid;
     }
@@ -154,11 +154,9 @@ export class Adabas {
     // Public API — all routed through the async queue
     // ---------------------------------------------------------------------------
 
-    public readFDT(callData: CallData = {}): Promise<FdtResult> {
-        if (!callData.fnr) return Promise.reject(new Error('File number is not provided'));
-
+    public readFDT(fnr: number): Promise<FdtResult> {
         return new FileDescriptionTable(this.host, this.port, this.log)
-            .getFDT(callData.fnr)
+            .getFDT(fnr)
             .then((fdt: FdtResult) => {
                 if (Array.isArray(fdt) && fdt.length === 0) {
                     throw new Error('File does not exist in the database');
@@ -167,16 +165,16 @@ export class Adabas {
             });
     }
 
-    public create(callData: CallData = {}): Promise<number> {
-        return this.enqueue(() => this.exeCreate(callData));
+    public create<T extends AdabasRecord = AdabasRecord>(callData: TypedCallData<T> = {}): Promise<number> {
+        return this.enqueue(() => this.exeCreate(callData as CallData));
     }
 
-    public read(callData: CallData = {}): Promise<AdabasRecord[]> {
-        return this.enqueue(() => this.exeRead(callData));
+    public read<T extends AdabasRecord = AdabasRecord>(callData: CallData = {}): Promise<T[]> {
+        return this.enqueue(() => this.exeRead(callData)) as Promise<T[]>;
     }
 
-    public update(callData: CallData = {}): Promise<number> {
-        return this.enqueue(() => this.exeUpdate(callData));
+    public update<T extends AdabasRecord = AdabasRecord>(callData: TypedCallData<T> = {}): Promise<number> {
+        return this.enqueue(() => this.exeUpdate(callData as CallData));
     }
 
     public delete(callData: CallData = {}): Promise<number> {
@@ -199,26 +197,26 @@ export class Adabas {
      * Returns a cursor for explicit page-by-page iteration.
      * Avoids storing pagination state on the instance.
      */
-    public readCursor(callData: CallData = {}): AdabasCursor {
-        let lastISN  = 0;
+    public readCursor<T extends AdabasRecord = AdabasRecord>(callData: CallData = {}): AdabasCursor<T> {
+        let lastISN = 0;
         let pageDone = false;
 
         return {
             hasMore: () => !pageDone,
-            reset:   () => { lastISN = 0; pageDone = false; },
-            next:    (): Promise<AdabasRecord[]> => {
+            reset: () => { lastISN = 0; pageDone = false; },
+            next: (): Promise<T[]> => {
                 if (pageDone) return Promise.resolve([]);
 
                 const pageData: CursorCallData = { ...callData, _cursorISN: lastISN };
 
                 return this.enqueue(() => this.exeRead(pageData)).then((result) => {
-                    const records = result as AdabasRecord[];
+                    const records = result as T[];
                     if (records.length === 0 || records.length < (callData.page ?? Infinity)) {
                         pageDone = true;
                     }
                     if (records.length > 0) {
                         const last = records[records.length - 1];
-                        lastISN = last._isn ?? lastISN;
+                        lastISN = last.ISN as number ?? lastISN;
                     }
                     return records;
                 });
@@ -241,7 +239,7 @@ export class Adabas {
         }
         return new Promise<T>((resolve, reject) => {
             const entry: CommandQueue = {
-                _fn:     fn as () => Promise<unknown>,
+                _fn: fn as () => Promise<unknown>,
                 resolve: resolve as (value: unknown) => void,
                 reject,
             };
@@ -265,13 +263,13 @@ export class Adabas {
     private async exeCreate(callData: CallData): Promise<number> {
         this.validateCallData(callData, ['object']);
         this.type = CallType.Create;
-        this.map  = await this.getMap(callData);
+        this.map = await this.getMap(callData);
         return this.modify(callData.object as AdabasRecord, callData.isn as number | undefined);
     }
 
-    private async exeRead(callData: CursorCallData): Promise< AdabasRecord[]> {
+    private async exeRead(callData: CursorCallData): Promise<AdabasRecord[]> {
         this.type = CallType.Read;
-        this.map  = await this.getMap(callData);
+        this.map = await this.getMap(callData);
         await this.open(this.map.fnr);
         if (callData.isn !== undefined) {
             if (typeof callData.isn === 'number') {
@@ -291,7 +289,7 @@ export class Adabas {
         }
         this.validateCallData(callData, ['object']);
         this.type = CallType.Update;
-        this.map  = await this.getMap(callData);
+        this.map = await this.getMap(callData);
         await this.open(this.map.fnr);
 
         const isn = callData.isn
@@ -305,14 +303,14 @@ export class Adabas {
     private async exeDelete(callData: CallData): Promise<number> {
         this.validateCallData(callData, ['criteria', 'isn']);
         this.type = CallType.Delete;
-        this.map  = await this.getMap(callData);
+        this.map = await this.getMap(callData);
         await this.open(this.map.fnr);
         if (callData.isn && typeof callData.isn === 'number') {
             this.cb.init({ fnr: this.map.fnr, cmd: AdabasCommand.Delete, isn: callData.isn });
             await this.callAdabas();
-            if (this.cb.rsp !== 0) throw new Error(this.getMessage(this.cb)); 
+            if (this.cb.rsp !== 0) throw new Error(this.getMessage(this.cb));
             return callData.isn;
-        }       
+        }
         return this.criteriaToIsn(callData.criteria);
     }
 
@@ -366,6 +364,18 @@ export class Adabas {
         abda: AdabasBufferStructure = null,
         cb: ControlBlock = this.cb,
     ): Promise<PayloadData> {
+        // The Adabas server closes the TCP connection after each high-level
+        // operation (read, search, etc.).  When that happens the socket is
+        // silently destroyed while `this.connected` is still true.  Detect
+        // the stale socket here and rebuild the transport layer so the normal
+        // connect → open → call flow runs again transparently.
+        if (this.connected && !this.client.isAlive()) {
+            logger.debug('Socket destroyed between calls — reconnecting');
+            this.client    = new AdabasTcp(this.host, this.port);
+            this.adabas    = new AdabasCall(this.client, this.log);
+            this.connected = false;
+            this.status    = Status.Close;
+        }
         if (!this.connected) await this.connect();
         const result = await this.adabas.call({ cb, abda, uuid: this.uuid });
         this.cb = result.cb;
@@ -377,10 +387,10 @@ export class Adabas {
     // ---------------------------------------------------------------------------
 
     private async getAll(callData: CursorCallData): Promise<AdabasRecord[]> {
-        const abda   = new AdabasBufferStructure();
+        const abda = new AdabasBufferStructure();
         const result: AdabasRecord[] = [];
-        let end      = false;
-        let lastISN  = callData._cursorISN ?? 0;
+        let end = false;
+        let lastISN = callData._cursorISN ?? 0;
 
         let range: string[] | undefined;
         if (callData.isn && typeof callData.isn === 'string') {
@@ -400,18 +410,18 @@ export class Adabas {
             abda.add('I', Buffer.alloc(4));
         } else {
             this.cb.init({
-                fnr:  this.map.fnr,
+                fnr: this.map.fnr,
                 cop1: 'M',
                 cop2: 'I',
-                cid:  'ANGA',
+                cid: 'ANGA',
             });
             if (callData.sortedBy) {
                 const item = this.map.list.find(i => i.longName === callData.sortedBy);
                 if (!item) throw new Error(`'${callData.sortedBy}' not found in Datamap.`);
-                this.cb.cmd  = AdabasCommand.ReadSorted;
+                this.cb.cmd = AdabasCommand.ReadSorted;
                 this.cb.add1 = item.shortName;
                 this.cb.cop2 = 'A';
-                this.cb.cid  = 'RELO';
+                this.cb.cid = 'RELO';
             } else {
                 this.cb.cmd = AdabasCommand.ReadISN;
                 if (range) this.cb.isn = parseInt(range[0], 10);
@@ -432,12 +442,17 @@ export class Adabas {
                 if (callData.criteria) {
                     result.push(this.createObject(this.cb.isn, rb));
                     this.cb.isn++;
+                    if (callData.page && result.length >= callData.page) {
+                        end = true;
+                        this.cb.isq = 0;
+                        break;
+                    }
                     if (this.cb.isq === 1) break;
                 } else {
-                    const mbRaw    = res.abda.getBuffer('M');
+                    const mbRaw = res.abda.getBuffer('M');
                     const mbPadded = this.padBuffer(mbRaw, this.multifetch * MULTIFETCH_ENTRY_SIZE + MULTIFETCH_HEADER_SIZE);
-                    const multi    = getFields(mbPadded);
-                    let offset     = 0;
+                    const multi = getFields(mbPadded);
+                    let offset = 0;
 
                     for (let i = 0; i < multi.num; i++) {
                         const mbe = multi.mbe[i];
@@ -450,7 +465,6 @@ export class Adabas {
                             result.push(this.createObject(isn, r));
                             offset += mbe.len;
                             lastISN = isn;
-
                             if (callData.page && result.length >= callData.page) {
                                 end = true;
                                 break;
@@ -464,7 +478,7 @@ export class Adabas {
             }
 
             if (callData.criteria) {
-                this.cb.cmd  = AdabasCommand.ReadISN;
+                this.cb.cmd = AdabasCommand.ReadISN;
                 this.cb.cop2 = 'N';
             }
         } while (this.cb.rsp === 0 && !end);
@@ -473,17 +487,17 @@ export class Adabas {
         throw new Error(this.getMessage(this.cb));
     }
 
-    private async get(isn: number): Promise<AdabasRecord > {
-            this.cb.init({ fnr: this.map.fnr, cmd: AdabasCommand.ReadISN, isn, cop2: 'I' });
-            const abda = new AdabasBufferStructure();
-            abda.add('F', Buffer.from(this.map.getFb()));
-            abda.add('R', Buffer.alloc(this.map.getRbLen()));
-            const res = await this.callAdabas(abda);
-            if (this.cb.rsp !== 0) {
-                if (this.cb.rsp === 3) throw new Error('Record not found.');
-                throw new Error(this.getMessage(this.cb));
-            }
-            return this.createObject(this.cb.isn, res.abda.getBuffer('R'));
+    private async get(isn: number): Promise<AdabasRecord> {
+        this.cb.init({ fnr: this.map.fnr, cmd: AdabasCommand.ReadISN, isn, cop2: 'I' });
+        const abda = new AdabasBufferStructure();
+        abda.add('F', Buffer.from(this.map.getFb()));
+        abda.add('R', Buffer.alloc(this.map.getRbLen()));
+        const res = await this.callAdabas(abda);
+        if (this.cb.rsp !== 0) {
+            if (this.cb.rsp === 3) throw new Error('Record not found.');
+            throw new Error(this.getMessage(this.cb));
+        }
+        return this.createObject(this.cb.isn, res.abda.getBuffer('R'));
     }
 
     // ---------------------------------------------------------------------------
@@ -607,11 +621,11 @@ export class Adabas {
 
     private async getIsnFromCriteria(sb: Buffer, vb: Buffer): Promise<number> {
         this.cb.init({
-            fnr:  this.map.fnr,
-            cmd:  AdabasCommand.Search,
-            cid:  'ADJS',
+            fnr: this.map.fnr,
+            cmd: AdabasCommand.Search,
+            cid: 'ADJS',
             cop2: 'I',
-            isq:  2,
+            isq: 2,
         });
 
         const abda = new AdabasBufferStructure();
@@ -619,13 +633,13 @@ export class Adabas {
         abda.add('R', Buffer.alloc(0));
         abda.add('S', sb);
         abda.add('V', vb);
-        abda.add('I',   Buffer.alloc(8));
+        abda.add('I', Buffer.alloc(8));
 
         await this.callAdabas(abda);
 
         if (this.cb.rsp !== 0) throw new Error(this.getMessage(this.cb));
         if (this.cb.isq === 0) throw new Error('No record with this criteria found.');
-        if (this.cb.isq > 1)   throw new Error(`${this.cb.isq} records with this criteria found.`);
+        if (this.cb.isq > 1) throw new Error(`${this.cb.isq} records with this criteria found.`);
 
         return this.cb.isn;
     }

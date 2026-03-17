@@ -75,6 +75,19 @@ export interface CallData {
     page?: number;
 }
 
+/**
+ * Typed variant of CallData — use with create() and update() to gain full
+ * type-safety on the `object` field.
+ *
+ * @example
+ * const data: TypedCallData<Employee> = { map: employeeMap, object: { name: 'Ada', salary: 50000 } };
+ * await adabas.create<Employee>(data);
+ */
+export interface TypedCallData<T extends AdabasRecord = AdabasRecord>
+    extends Omit<CallData, 'object'> {
+    object?: T;
+}
+
 // ---------------------------------------------------------------------------
 // Options
 // ---------------------------------------------------------------------------

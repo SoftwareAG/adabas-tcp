@@ -120,6 +120,14 @@ export class AdabasTcp {
         });
     }
 
+    /**
+     * Returns true when the underlying socket is still open and usable.
+     * A destroyed socket cannot be written to; callers should reconnect.
+     */
+    isAlive(): boolean {
+        return !this.socket.destroyed;
+    }
+
     close(): void {
         logger.debug('destroy socket');
         this.socket.destroy();
