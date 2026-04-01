@@ -91,8 +91,8 @@ export class FileDescriptionTable {
     private readonly adabasCall: AdabasCall;
 
     constructor(host: string, port: number, log: LogEvent[] = []) {
-        this.client      = new AdabasTcp(host, port);
-        this.adabasCall  = new AdabasCall(this.client, log);
+        this.client = new AdabasTcp(host, port);
+        this.adabasCall = new AdabasCall(this.client, log);
     }
 
     // -----------------------------------------------------------------------
@@ -102,16 +102,16 @@ export class FileDescriptionTable {
     async getFDT(fnr: number): Promise<FdtField[]> {
         const uuid = await new AdabasConnect(this.client).connect();
 
-        const cb   = new ControlBlock();
+        const cb = new ControlBlock();
         const abda = new AdabasBufferStructure();
         abda.add('R', Buffer.alloc(LF_BUFFER_SIZE));
 
         cb.init({ fnr, cmd: 'LF', cop2: 'S' });
         const result = await this.adabasCall.call({ cb, abda, uuid });
 
-        const rb             = result.abda.getBuffer('R');
+        const rb = result.abda.getBuffer('R');
         const numberOfFields = rb.readUInt16LE(FDT_FIELD_COUNT_OFFSET);
-        const fdt            = this.parseFields(rb, numberOfFields);
+        const fdt = this.parseFields(rb, numberOfFields);
 
         // Close session
         cb.init({ cmd: 'CL' });
@@ -124,7 +124,7 @@ export class FileDescriptionTable {
     async getMap(fnr: number): Promise<AdabasMap> {
         const fdt = await this.getFDT(fnr);
         const map = this.objectToMap(fdt);
-        map.fnr   = fnr;
+        map.fnr = fnr;
         return map;
     }
 
@@ -136,14 +136,14 @@ export class FileDescriptionTable {
         const fdt: FdtField[] = [];
 
         for (let index = 0; index < count; index++) {
-            const offset    = FDT_FIELDS_START + index * FDT_ENTRY_SIZE;
-            const indicator = rb.toString(ENCODING, offset,     offset + 1);
-            const name      = rb.toString(ENCODING, offset + 1, offset + 3);
-            const option1   = rb.readUInt8(offset + 3);
-            const level     = rb.readUInt8(offset + 4);
-            const length    = rb.readUInt8(offset + 5);
-            const format    = rb.toString(ENCODING, offset + 6, offset + 7);
-            const option2   = rb.readUInt8(offset + 7);
+            const offset = FDT_FIELDS_START + index * FDT_ENTRY_SIZE;
+            const indicator = rb.toString(ENCODING, offset, offset + 1);
+            const name = rb.toString(ENCODING, offset + 1, offset + 3);
+            const option1 = rb.readUInt8(offset + 3);
+            const level = rb.readUInt8(offset + 4);
+            const length = rb.readUInt8(offset + 5);
+            const format = rb.toString(ENCODING, offset + 6, offset + 7);
+            const option2 = rb.readUInt8(offset + 7);
 
             if (indicator !== 'F') continue;
 
@@ -153,8 +153,8 @@ export class FileDescriptionTable {
             const options = this.parseOptions(option1, option2);
             const field: FdtField = { level, name };
 
-            if (isPe)              field.type    = 'PE';
-            else if (isGr)         field.type    = 'GR';
+            if (isPe) field.type = 'PE';
+            else if (isGr) field.type = 'GR';
             else {
                 field.format = format;
                 field.length = length;
@@ -194,7 +194,7 @@ export class FileDescriptionTable {
 
     private objectToMap(fields: FdtField[]): AdabasMap {
         const map = new AdabasMap();
-        let   current: AdabasMap = map;
+        let current: AdabasMap = map;
 
         for (const element of fields) {
             const longName = element.name; // longName alias reserved for future mapping support
@@ -206,7 +206,7 @@ export class FileDescriptionTable {
                     continue;
                 }
 
-                logger.debug({ name: element.name, longName, type: 'field', format: element.format, length: element.length }, 'Field');
+                logger.trace({ name: element.name, longName, type: 'field', format: element.format, length: element.length }, 'Field');
 
                 const isMu = element.options?.includes('MU') ?? false;
 
@@ -220,13 +220,13 @@ export class FileDescriptionTable {
             } else {
                 switch (element.type) {
                     case 'GR':
-                        logger.debug({ name: element.name, longName, type: 'GR' }, 'Group field');
+                        logger.trace({ name: element.name, longName, type: 'GR' }, 'Group field');
                         current = new AdabasMap();
                         map.group(current, element.name, { name: longName });
                         break;
 
                     case 'PE':
-                        logger.debug({ name: element.name, longName, type: 'PE', occ: 10 }, 'Periodic (PE) field');
+                        logger.trace({ name: element.name, longName, type: 'PE', occ: 10 }, 'Periodic (PE) field');
                         current = new AdabasMap();
                         map.group(current, element.name, { name: longName, occ: 10 });
                         break;

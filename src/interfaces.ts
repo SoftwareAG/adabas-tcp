@@ -121,6 +121,7 @@ export interface MapData {
     map?: AdabasMap;
     options?: MapOption;
     offset?: number;
+    parent?: MapData; // only for TYPE_PERIODIC_FIELD set
 }
 
 export interface MapOption {

@@ -167,57 +167,57 @@ describe('AdabasMap', () => {
 
         test('throws when an alpha field receives a non-string value', () => {
             const map = new AdabasMap().alpha(10, 'AA', { name: 'alpha' });
-            expect(() => map.validate({ alpha: 123 })).toThrow(/"alpha" must be a string/);
+            expect(() => map.validate({ alpha: 123 })).toThrow(/Invalid input: expected string, received number/);
         });
 
         test('throws when a fixed field receives a non-number value', () => {
             const map = new AdabasMap().fixed(8, 'AA', { name: 'fixed' });
-            expect(() => map.validate({ fixed: 'abc' })).toThrow(/"fixed" must be a number/);
+            expect(() => map.validate({ fixed: 'abc' })).toThrow(/Invalid input: expected number, received string/);
         });
 
         test('throws when a packed field receives a non-number value', () => {
             const map = new AdabasMap().packed(10, 'AA', { name: 'packed' });
-            expect(() => map.validate({ packed: 'abc' })).toThrow(/"packed" must be a number/);
+            expect(() => map.validate({ packed: 'abc' })).toThrow(/Invalid input: expected number, received string/);
         });
 
         test('throws when an unpacked field receives a non-number value', () => {
             const map = new AdabasMap().unpacked(10, 'AA', { name: 'unpacked' });
-            expect(() => map.validate({ unpacked: 'abc' })).toThrow(/"unpacked" must be a number/);
+            expect(() => map.validate({ unpacked: 'abc' })).toThrow(/Invalid input: expected number, received string/);
         });
 
         test('throws when a float field receives a non-number value', () => {
             const map = new AdabasMap().float(8, 'AA', { name: 'float' });
-            expect(() => map.validate({ float: 'abc' })).toThrow(/"float" must be a number/);
+            expect(() => map.validate({ float: 'abc' })).toThrow(/Invalid input: expected number, received string/);
         });
 
         test('throws when a group field receives a non-object value', () => {
             const inner = new AdabasMap().alpha(10, 'AA', { name: 'alpha' });
             const map   = new AdabasMap().group(inner, 'GR', { name: 'group' });
-            expect(() => map.validate({ group: 'abc' })).toThrow(/"group" must be of type object/);
+            expect(() => map.validate({ group: 'abc' })).toThrow(/Invalid input: expected object, received string/);
         });
 
         test('throws when a multiple field receives a non-array value', () => {
             const map = new AdabasMap().alpha(10, 'AA', { name: 'alpha', occ: 10 });
-            expect(() => map.validate({ alpha: 'abc' })).toThrow(/"alpha" must be an array/);
+            expect(() => map.validate({ alpha: 'abc' })).toThrow(/Invalid input: expected array, received string/);
         });
 
         test('throws when a periodic group receives a non-array value', () => {
             const inner = new AdabasMap().alpha(10, 'AA', { name: 'alpha' });
             const map   = new AdabasMap().group(inner, 'GR', { name: 'group', occ: 10 });
-            expect(() => map.validate({ group: 'abc' })).toThrow(/"group" must be an array/);
+            expect(() => map.validate({ group: 'abc' })).toThrow(/Invalid input: expected array, received string/);
         });
 
         test('throws when multiple field exceeds max occurrence count', () => {
             const map = new AdabasMap().alpha(10, 'AA', { name: 'alpha', occ: 2 });
             expect(() => map.validate({ alpha: ['a', 'b', 'c'] }))
-                .toThrow(/"alpha" must contain less than or equal to 2 items/);
+                .toThrow(/Too big: expected array to have <=2 items/);
         });
 
         test('throws when periodic group exceeds max occurrence count', () => {
             const inner = new AdabasMap().alpha(10, 'AA', { name: 'alpha' });
             const map   = new AdabasMap().group(inner, 'GR', { name: 'group', occ: 2 });
             expect(() => map.validate({ group: [{ alpha: 'a' }, { alpha: 'b' }, { alpha: 'c' }] }))
-                .toThrow(/"group" must contain less than or equal to 2 items/);
+                .toThrow(/Too big: expected array to have <=2 items/);
         });
     });
 

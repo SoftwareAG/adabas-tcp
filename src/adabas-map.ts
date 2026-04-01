@@ -17,7 +17,7 @@
  *
  */
 
-import Joi = require('joi');
+import { z } from 'zod';
 import { Int64LE } from 'int64-buffer';
 import { AdabasRecord, MapData, MapOption } from './interfaces';
 import logger from './logger';
@@ -39,6 +39,7 @@ type ScalarFieldValue = string | number | Buffer | Date;
 const TYPE_REGULAR = 'regular';
 const TYPE_MULTIPLE = 'multiple';
 const TYPE_PERIODIC = 'periodic';
+const TYPE_PERIODIC_FIELD = 'field'; // when a single PE field is requested
 const TYPE_GROUP = 'group';
 
 const FIELD_FORMAT_ALPHA = 'alpha';
@@ -57,12 +58,13 @@ export class AdabasMap {
 
     private _fnr: number;
     private _list: MapData[];
-    private schema: Joi.ObjectSchema;
+    private schemaMap = new Map<string, z.ZodTypeAny>();
+    private schema: z.ZodObject<z.ZodRawShape>;
 
     constructor(fnr = 0) {
         this._fnr = fnr;
         this._list = [];
-        this.schema = Joi.object();
+        this.schema = z.object({});
     }
 
     get fnr(): number { return this._fnr; }
@@ -77,9 +79,17 @@ export class AdabasMap {
     getField(name: string): MapData | null {
         for (const f of this._list) {
             if (f.longName === name) return f;
-            if (f.type === TYPE_GROUP && f.map) {
+            if ((f.type === TYPE_GROUP || f.type === TYPE_PERIODIC) && f.map) {
                 const nested = f.map.getField(name);
-                if (nested !== null) return nested;
+                if (nested !== null) {
+                    if (f.type === TYPE_PERIODIC) {
+                        const pe = { ...nested };
+                        pe.type = TYPE_PERIODIC_FIELD;
+                        pe.parent = f;
+                        return pe;
+                    }
+                    return nested;
+                }
             }
         }
         return null;
@@ -89,7 +99,7 @@ export class AdabasMap {
     // Field builders
     // -----------------------------------------------------------------------
 
-    field(shortName: string, length: number, format: string, validate: Joi.Schema, options?: MapOption): AdabasMap {
+    field(shortName: string, length: number, format: string, validate: z.ZodTypeAny, options?: MapOption): AdabasMap {
         const opt = options ?? { occ: 0, name: shortName };
         const occ = opt.occ ?? 0;
         const longName = opt.name ?? shortName;
@@ -106,45 +116,45 @@ export class AdabasMap {
             object.type = TYPE_MULTIPLE;
             object.occ = occ;
             this._list.push(object);
-            this.appendSchema(longName, Joi.array().max(occ));
+            this.appendSchema(longName, z.array(z.unknown()).max(occ));
         }
         return this;
     }
 
     alpha(length: number, shortName: string, options?: MapOption): AdabasMap {
-        return this.field(shortName, length, 'A', Joi.string(), options);
+        return this.field(shortName, length, 'A', z.string(), options);
     }
 
     wide(length: number, shortName: string, options?: MapOption): AdabasMap {
-        return this.field(shortName, length, 'W', Joi.string(), options);
+        return this.field(shortName, length, 'W', z.string(), options);
     }
 
     binary(length: number, shortName: string, options?: MapOption): AdabasMap {
         if (options?.format === 'number' && ![1, 2, 4, 8].includes(length)) {
             throw new Error('Number format only allowed for binary of length 1, 2, 4 or 8.');
         }
-        const joi = options?.format === 'number' ? Joi.number() : Joi.binary();
-        return this.field(shortName, length, 'B', joi, options);
+        const zod = options?.format === 'number' ? z.number() : z.instanceof(Buffer);
+        return this.field(shortName, length, 'B', zod, options);
     }
 
     fixed(length: number, shortName: string, options?: MapOption): AdabasMap {
         if (![1, 2, 4, 8].includes(length)) throw new Error('Fields of type fixed must have a length of 1, 2, 4 or 8.');
-        return this.field(shortName, length, 'F', Joi.number(), options);
+        return this.field(shortName, length, 'F', z.number(), options);
     }
 
     float(length: number, shortName: string, options?: MapOption): AdabasMap {
         if (![4, 8].includes(length)) throw new Error('Fields of type float must have a length of 4 or 8.');
-        return this.field(shortName, length, 'G', Joi.number(), options);
+        return this.field(shortName, length, 'G', z.number(), options);
     }
 
     packed(length: number, shortName: string, options?: MapOption): AdabasMap {
-        const joi = (options?.format === 'date' || options?.format === 'time') ? Joi.date() : Joi.number();
-        return this.field(shortName, length, 'P', joi, options);
+        const zod = (options?.format === 'date' || options?.format === 'time') ? z.date() : z.number();
+        return this.field(shortName, length, 'P', zod, options);
     }
 
     unpacked(length: number, shortName: string, options?: MapOption): AdabasMap {
-        const joi = (options?.format === 'date' || options?.format === 'time') ? Joi.date() : Joi.number();
-        return this.field(shortName, length, 'U', joi, options);
+        const zod = (options?.format === 'date' || options?.format === 'time') ? z.date() : z.number();
+        return this.field(shortName, length, 'U', zod, options);
     }
 
     group(map: AdabasMap, shortName: string, options?: MapOption): AdabasMap {
@@ -155,10 +165,10 @@ export class AdabasMap {
 
         if (occ === 0) {
             this._list.push({ type: TYPE_GROUP, shortName, longName, format: 'GR', map, options });
-            this.appendSchema(longName, Joi.object());
+            this.appendSchema(longName, map.schema);
         } else {
             this._list.push({ type: TYPE_PERIODIC, shortName, longName, format: 'PE', occ, map, options });
-            this.appendSchema(longName, Joi.array().max(occ));
+            this.appendSchema(longName, z.array(z.unknown()).max(occ));
         }
         return this;
     }
@@ -193,6 +203,17 @@ export class AdabasMap {
                     parts.push(item.map.getFb(counter, item.occ, true));
                     break;
 
+                case TYPE_PERIODIC_FIELD:
+                    if (item.occ) {
+                        if (counter) parts.push(`${item.shortName}1-${item.occ}C,1,B`);
+                        parts.push(`${item.shortName}1-${item.parent.occ}(1-${item.occ}),${item.length},${item.format}`);
+                    }
+                    else {
+                        if (counter) parts.push(`${item.parent.shortName}${occString}C,1,B`);
+                        parts.push(`${item.shortName}1-${item.parent.occ},${item.length},${item.format}`);
+                    }
+                    break;
+
                 case TYPE_GROUP:
                     parts.push(item.map.getFb(counter, 0, true));
                     break;
@@ -204,7 +225,7 @@ export class AdabasMap {
 
     getRbLen(counter = 1): number {
         let len = 0;
-        logger.debug({ listLength: this._list.length }, 'map list length');
+        logger.trace({ listLength: this._list.length }, 'map list length');
 
         for (const item of this._list) {
             switch (item.type) {
@@ -216,7 +237,14 @@ export class AdabasMap {
                     break;
                 case TYPE_PERIODIC:
                     len += item.map.getRbLen(counter) * item.occ + counter;
-                    logger.debug({ len }, 'getRbLen incremental');
+                    break;
+                case TYPE_PERIODIC_FIELD:
+                    if (item.occ) {
+                        len += item.length * item.parent.occ * item.occ + counter * item.occ;
+                    }
+                    else {
+                        len += item.length * item.parent.occ + counter;
+                    }
                     break;
                 case TYPE_GROUP:
                     len += item.map.getRbLen(counter);
@@ -227,6 +255,7 @@ export class AdabasMap {
     }
 
     getRb(object: AdabasRecord, counter = false): Buffer {
+        // todo: add handling for a single PE field (not group!)
         this.setOffset(counter);
         const cnt = counter ? 1 : 0;
         const buffer = this.initBuffer(this.getRbLen(cnt));
@@ -308,7 +337,6 @@ export class AdabasMap {
                             }
                             if (counter) offset += mapData.occ;
                         }
-
                         for (let i = 0; i < count; i++) {
                             if (!periodic[i]) periodic[i] = {};
 
@@ -320,36 +348,52 @@ export class AdabasMap {
                                 }
                                 periodic[i][peData.longName] = muValues;
                             } else {
-                                periodic[i][peData.longName] = this.extractField(peData, buffer,
-                                    offset + i * peData.length);
+                                periodic[i][peData.longName] = this.extractField(peData, buffer, offset + i * peData.length);
                             }
                         }
-
                         offset += peData.length * mapData.occ;
                     }
-
                     obj[mapData.longName] = periodic;
                 } else {
                     // Regular group
                     obj[mapData.longName] = mapData.map.getObject(
-                        buffer.slice(mapData.offset, mapData.offset + mapData.map.getRbLen())
+                        buffer.subarray(mapData.offset, mapData.offset + mapData.map.getRbLen())
                     );
                 }
-            } else if (mapData.occ) {
-                // Multiple-value field
-                let index = mapData.occ;
-                let offset = mapData.offset;
-
-                if (counter) {
-                    index = Math.min(buffer.readInt8(offset), index);
-                    offset++;
+            } else if (mapData.occ || mapData.type === TYPE_PERIODIC_FIELD) {
+                if (mapData.type === TYPE_PERIODIC_FIELD && mapData.occ > 0) {
+                    let offset = mapData.offset;
+                    const peCnt: number[] = [];
+                    for (let i = 0; i < mapData.occ; i++) {
+                        peCnt.push(counter ? buffer.readInt8(offset + i) : mapData.occ);
+                    }
+                    if (counter) offset += mapData.occ;
+                    const values: ScalarFieldValue[][] = [];
+                    for (let i = 0; i < peCnt.length; i++) {
+                        if (peCnt[i] > 0) values[i] = [];
+                        for (let j = 0; j < peCnt[i]; j++) {
+                            values[i].push(this.extractField(mapData, buffer,
+                                offset + (i * mapData.occ + j) * mapData.length));
+                        }
+                    }
+                    obj[mapData.longName] = values;
                 }
+                else {
+                    // Multiple-value field
+                    let index = mapData.type === TYPE_PERIODIC_FIELD ? mapData.parent.occ : mapData.occ;
+                    let offset = mapData.offset;
 
-                const multi: ScalarFieldValue[] = [];
-                for (let i = 0; i < index; i++) {
-                    multi.push(this.extractField(mapData, buffer, offset + i * mapData.length));
+                    if (counter) {
+                        index = Math.min(buffer.readInt8(offset), index);
+                        offset++;
+                    }
+
+                    const multi: ScalarFieldValue[] = [];
+                    for (let i = 0; i < index; i++) {
+                        multi.push(this.extractField(mapData, buffer, offset + i * mapData.length));
+                    }
+                    obj[mapData.longName] = multi;
                 }
-                obj[mapData.longName] = multi;
             } else {
                 // Regular field
                 obj[mapData.longName] = this.extractField(mapData, buffer);
@@ -364,8 +408,8 @@ export class AdabasMap {
     // -----------------------------------------------------------------------
 
     validate(object: AdabasRecord): void {
-        const result = this.schema.validate(object);
-        if (result.error) throw new Error(result.error.message);
+        const result = this.schema.partial().safeParse(object);
+        if (!result.success) throw new Error(result.error.message);
     }
 
     // -----------------------------------------------------------------------
@@ -406,6 +450,7 @@ export class AdabasMap {
             switch (element.type) {
                 case TYPE_REGULAR:
                 case TYPE_MULTIPLE:
+                case TYPE_PERIODIC_FIELD:
                     line += `\t.${this.getFieldFormat(element.format)}(${element.length}, '${element.shortName}'`;
                     line += this.optionsToString(element.options);
                     line += ')\n';
@@ -443,8 +488,12 @@ export class AdabasMap {
     // Private helpers
     // -----------------------------------------------------------------------
 
-    private appendSchema(name: string, schema: Joi.Schema): void {
-        this.schema = this.schema.append({ [name]: schema });
+    private appendSchema(name: string, schema: z.ZodTypeAny): void {
+        if (this.schemaMap.has(name)) {
+            throw new Error(`Schema conflict: field '${name}' is already defined.`);
+        }
+        this.schemaMap.set(name, schema);
+        this.schema = z.object(Object.fromEntries(this.schemaMap));
     }
 
     private initBuffer(size: number): Buffer {
@@ -511,7 +560,6 @@ export class AdabasMap {
 
             case 'P': { // packed
                 let packed = 0;
-                // check type of value
                 if (value instanceof Date) {
                     packed = getNumberFromDate(value, item.options?.format ?? '');
                 }
@@ -547,8 +595,8 @@ export class AdabasMap {
                 }
                 else {
                     unpacked = item.options?.prec
-                    ? (value as number) * Math.pow(10, item.options.prec)
-                    : (value as number);
+                        ? (value as number) * Math.pow(10, item.options.prec)
+                        : (value as number);
                 }
                 buffer.write(String(unpacked).padStart(item.length, '0'), offset, item.length);
                 break;
@@ -655,8 +703,6 @@ export class AdabasMap {
                     : buffer.readDoubleLE(offset);
 
             case 'B': { // binary
-                // FIX: original code was missing `break` statements — all cases fell through,
-                // returning the Int64 result regardless of length.
                 if (mapData.options?.format === 'number') {
                     switch (mapData.length) {
                         case 1: return buffer.readInt8(offset);
@@ -701,6 +747,10 @@ export class AdabasMap {
                     break;
                 case TYPE_MULTIPLE:
                     offset += data.length * data.occ * occ;
+                    if (counter) offset += occ;
+                    break;
+                case TYPE_PERIODIC_FIELD:
+                    offset += data.length * data.parent.occ * occ;
                     if (counter) offset += occ;
                     break;
                 case TYPE_GROUP:

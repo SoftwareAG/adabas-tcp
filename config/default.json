@@ -1,7 +1,7 @@
 {
   "AdaTcp": {
-    "host": "localhost",
-    "port": 49152
+    "host": "redada5t.eur.ad.sag",
+    "port": 60001
   },
   "Test": {
     "employeeFile": 11
