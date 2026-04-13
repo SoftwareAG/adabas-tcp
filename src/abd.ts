@@ -17,7 +17,6 @@
  *
  */
 
-import { Int64LE } from 'int64-buffer';
 import { BufferId } from './adabas-buffer-structure';
 
 export class Abd {
@@ -70,11 +69,11 @@ export class Abd {
     set recv(value: number) { this.writeInt64(value, Abd.OFFSET_RECV); }
 
     private writeInt64(value: number, offset: number): void {
-        new Int64LE(value).toBuffer().copy(this.abd, offset, 0, 8);
+        this.abd.writeBigInt64LE(BigInt(value), offset);
     }
 
     private readInt64(offset: number): number {
-        return new Int64LE(this.abd, offset).toNumber();
+        return Number(this.abd.readBigInt64LE(offset));
     }
 
 }

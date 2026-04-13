@@ -17,8 +17,6 @@
  *
  */
 
-import { Int64LE } from 'int64-buffer';
-
 // ---------------------------------------------------------------------------
 // Adabas Extended Control Block (ACBX) — wire layout constants
 // All offsets are in decimal bytes from the start of the 192-byte buffer.
@@ -308,10 +306,10 @@ export class ControlBlock {
     }
 
     private readInt64(offset: number): number {
-        return new Int64LE(this.buffer, offset).toNumber();
+        return Number(this.buffer.readBigInt64LE(offset));
     }
 
     private writeInt64(value: number, offset: number): void {
-        new Int64LE(value).toBuffer().copy(this.buffer, offset, 0, 8);
+        this.buffer.writeBigInt64LE(BigInt(value), offset);
     }
 }
