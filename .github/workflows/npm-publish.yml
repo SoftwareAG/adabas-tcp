@@ -17,22 +17,34 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # node-version '22' meets the required Node version (>= 22.14.0) but
+      # ships npm 10.x, which is too old for trusted publishing.
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
+      # Trusted publishing over OIDC requires npm >= 11.5.1. Without this step
+      # the publish fails even when the trusted publisher is configured
+      # correctly on npmjs. Pinned to 11.x rather than @latest so that a future
+      # npm major cannot break a release unannounced.
+      - name: Upgrade npm for trusted publishing
+        run: |
+          npm install -g "npm@^11.5.1"
+          node --version
+          npm --version
+
       - name: Install dependencies
         run: npm ci
 
-      # Kein --if-present: fehlt das build-Script, soll der Job scheitern und
-      # nicht stillschweigend ein altes dist/ veroeffentlichen.
+      # No --if-present: if the build script were ever renamed or removed the
+      # job must fail rather than silently publish a stale dist/.
       - name: Build
         run: npm run build
 
-      # Ein Release-Tag, der auf einen Commit mit abweichender Version zeigt,
-      # wuerde sonst unbemerkt unter der falschen Nummer publiziert.
+      # A release tag pointing at a commit with a different version would
+      # otherwise be published under the wrong number, unnoticed.
       - name: Verify tag matches package version
         if: github.event_name == 'release'
         run: |
@@ -43,10 +55,10 @@ jobs:
           fi
           echo "Tag and package version agree: $PKG"
 
-      # Prueft das echte Artefakt statt des Sources: packt das Tarball, installiert
-      # es mit AUSSCHLIESSLICH den deklarierten dependencies und laedt es. Faengt
-      # nicht deklarierte Laufzeit-Abhaengigkeiten, die im Dev-node_modules
-      # unsichtbar bleiben (siehe #32 / 1.1.6, fehlendes int64-buffer).
+      # Tests the actual artifact rather than the source: packs the tarball,
+      # installs it with ONLY its declared dependencies, and requires it. This
+      # catches undeclared runtime dependencies, which stay invisible in the dev
+      # node_modules (see #32 / 1.1.6, missing int64-buffer).
       - name: Smoke test the packed tarball
         run: |
           set -euo pipefail
