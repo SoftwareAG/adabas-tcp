@@ -8,11 +8,11 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    environment: npm    
+    environment: npm
     permissions:
       id-token: write
       contents: read
-      
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -22,11 +22,48 @@ jobs:
         with:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
+
       - name: Install dependencies
         run: npm ci
 
-      - name: Build (if needed)
-        run: npm run build --if-present
+      # Kein --if-present: fehlt das build-Script, soll der Job scheitern und
+      # nicht stillschweigend ein altes dist/ veroeffentlichen.
+      - name: Build
+        run: npm run build
+
+      # Ein Release-Tag, der auf einen Commit mit abweichender Version zeigt,
+      # wuerde sonst unbemerkt unter der falschen Nummer publiziert.
+      - name: Verify tag matches package version
+        if: github.event_name == 'release'
+        run: |
+          PKG="v$(node -p "require('./package.json').version")"
+          if [ "$PKG" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $PKG"
+            exit 1
+          fi
+          echo "Tag and package version agree: $PKG"
+
+      # Prueft das echte Artefakt statt des Sources: packt das Tarball, installiert
+      # es mit AUSSCHLIESSLICH den deklarierten dependencies und laedt es. Faengt
+      # nicht deklarierte Laufzeit-Abhaengigkeiten, die im Dev-node_modules
+      # unsichtbar bleiben (siehe #32 / 1.1.6, fehlendes int64-buffer).
+      - name: Smoke test the packed tarball
+        run: |
+          set -euo pipefail
+          TARBALL="$(npm pack --pack-destination "$RUNNER_TEMP" --silent | tail -1)"
+          echo "Packed: $TARBALL"
+          SMOKE="$RUNNER_TEMP/smoke"
+          mkdir -p "$SMOKE"
+          cd "$SMOKE"
+          npm init -y > /dev/null
+          npm install "$RUNNER_TEMP/$TARBALL"
+          node -e "
+            const m = require('adabas-tcp');
+            for (const name of ['Adabas', 'AdabasMap', 'CallType']) {
+              if (!m[name]) { console.error('Missing export: ' + name); process.exit(1); }
+            }
+            console.log('Smoke test OK:', Object.keys(m).join(', '));
+          "
 
       - name: Publish to npm
         run: npm publish --provenance --access public

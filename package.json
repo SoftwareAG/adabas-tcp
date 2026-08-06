@@ -8,9 +8,10 @@
         "tcp"
     ],
     "main": "dist/index.js",
-    "types": "dist/index.d.js",
+    "types": "dist/index.d.ts",
     "scripts": {
         "build": "tsc",
+        "prepack": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc",
         "fdt": "jest -t FDT",
         "lint": "tsc --noEmit && eslint */**/*.{js,ts} --quiet --fix",
         "test": "jest --watchAll"
