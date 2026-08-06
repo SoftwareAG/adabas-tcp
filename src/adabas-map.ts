@@ -18,7 +18,6 @@
  */
 
 import { z } from 'zod';
-import { Int64LE } from 'int64-buffer';
 import { AdabasRecord, MapData, MapOption } from './interfaces';
 import logger from './logger';
 import { getNumberFromDate } from './common';
@@ -554,7 +553,7 @@ export class AdabasMap {
                     case 1: buffer.writeInt8(value as number, offset); break;
                     case 2: buffer.writeInt16LE(value as number, offset); break;
                     case 4: buffer.writeInt32LE(value as number, offset); break;
-                    case 8: new Int64LE(value as number).toBuffer().copy(buffer, offset, 0, item.length); break;
+                    case 8: buffer.writeBigInt64LE(BigInt(Math.trunc(value as number)), offset); break;
                 }
                 break;
 
@@ -616,7 +615,7 @@ export class AdabasMap {
                         case 1: buffer.writeInt8(value as number, offset); break;
                         case 2: buffer.writeInt16LE(value as number, offset); break;
                         case 4: buffer.writeInt32LE(value as number, offset); break;
-                        case 8: new Int64LE(value as number).toBuffer().copy(buffer, offset, 0, item.length); break;
+                        case 8: buffer.writeBigInt64LE(BigInt(Math.trunc(value as number)), offset); break;
                     }
                 } else {
                     (value as Buffer).copy(buffer, offset, 0, item.length);
@@ -644,7 +643,7 @@ export class AdabasMap {
                     case 1: return buffer.readInt8(offset);
                     case 2: return buffer.readInt16LE(offset);
                     case 4: return buffer.readInt32LE(offset);
-                    case 8: return new Int64LE(buffer, offset).toNumber();
+                    case 8: return Number(buffer.readBigInt64LE(offset));
                 }
                 break;
 
@@ -708,7 +707,7 @@ export class AdabasMap {
                         case 1: return buffer.readInt8(offset);
                         case 2: return buffer.readInt16LE(offset);
                         case 4: return buffer.readInt32LE(offset);
-                        case 8: return new Int64LE(buffer, offset).toNumber();
+                        case 8: return Number(buffer.readBigInt64LE(offset));
                     }
                 }
                 const bin = Buffer.alloc(mapData.length);
