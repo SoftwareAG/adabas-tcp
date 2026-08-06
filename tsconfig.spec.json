@@ -1,0 +1,16 @@
+{
+    /* Used by ts-jest only — see jest.config.js.
+       The base config sets "rootDir": "src" to pin the published dist/ layout.
+       Test files live outside src/, so ts-jest cannot map their output into
+       outDir and refuses to transform them. Widening rootDir to the project
+       root fixes that without affecting `npm run build`, which keeps using
+       tsconfig.json. */
+    "extends": "./tsconfig.json",
+    "compilerOptions": {
+        "rootDir": "."
+    },
+    "include": [
+        "src/**/*.ts",
+        "spec/**/*.ts"
+    ]
+}

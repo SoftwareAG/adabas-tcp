@@ -1,8 +1,17 @@
 {
   /* https://www.typescriptlang.org/docs/handbook/compiler-options.html */
   "compilerOptions": {
-    "target": "ES5",
+    /* ES5 is deprecated as of TS 6 and removed in TS 7. ES2022 is supported by
+       every Node version this package is tested on (see nodejs.yml: 22.x, 24.x)
+       and emits native classes, async/await and generators instead of
+       downlevelled helpers. */
+    "target": "ES2022",
     "module": "commonjs",
+    /* Pinned explicitly: TS 7 flips the default to true. This codebase is not
+       strict-null-clean yet (~130 findings, mostly in adabas-map.ts), and with
+       noEmitOnError the build would break on the TS 7 upgrade. The individual
+       strict flags enabled below stay in effect regardless of this setting. */
+    "strict": false,
     "noEmitOnError": true,
     "noUnusedLocals": true, /* Report errors on unused locals. */
     "noUnusedParameters": true, /* Report errors on unused parameters. */
@@ -14,6 +23,9 @@
     "inlineSourceMap": true,
     "declaration": true,
     "sourceRoot": "src",
+    /* Was previously inferred as ./src. TS 7 requires it to be explicit so the
+       output layout cannot shift when a file is added outside src/. */
+    "rootDir": "src",
     "outDir": "dist"
   },
   "exclude": [
