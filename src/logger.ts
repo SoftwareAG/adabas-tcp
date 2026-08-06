@@ -80,13 +80,13 @@ function makeLogFn(level: LogLevel): LogFn {
 
         if (typeof objOrMsg === 'string') {
             // logger.debug('message')
-            caller ? fn({ caller }, objOrMsg) : fn(objOrMsg);
+            if (caller) fn({ caller }, objOrMsg); else fn(objOrMsg);
         } else if (msg !== undefined) {
             // logger.debug({ key: value }, 'message')
-            caller ? fn({ ...objOrMsg, caller }, msg) : fn(objOrMsg, msg);
+            if (caller) fn({ ...objOrMsg, caller }, msg); else fn(objOrMsg, msg);
         } else {
             // logger.debug({ key: value })
-            caller ? fn({ ...objOrMsg, caller }) : fn(objOrMsg);
+            if (caller) fn({ ...objOrMsg, caller }); else fn(objOrMsg);
         }
     };
 }
